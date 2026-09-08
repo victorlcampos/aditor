@@ -17,4 +17,10 @@ which = "6"
 ffmpeg-sidecar = { version = "2", features = ["download_ffmpeg"] }
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 base64 = "0.22"
-ureq = { version = "3", default-features = false }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+sha2 = "0.10"
+tempfile = "3"
+self-replace = "1.5"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "4.6", default-features = false, features = ["deflate"] }

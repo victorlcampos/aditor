@@ -64,13 +64,53 @@ aditor edit demo.mp4 --from 2 --duration 10 --speed 2 --mute -o demo-final.mp4 -
 
 These links always resolve to the latest published release. [Download SHA256SUMS](https://github.com/victorlcampos/aditor/releases/latest/download/SHA256SUMS) to verify your archive.
 
-Extract the archive and move `aditor` (or `aditor.exe`) to a directory on your
-`PATH`. Run `aditor --version` to verify the installation. Downloads include the
-README and license; `SHA256SUMS` contains checksums for all archives. On Linux,
-verify your download with `sha256sum --ignore-missing --check SHA256SUMS`; on
-macOS, use `shasum -a 256 <archive>` and compare the result with `SHA256SUMS`.
-On Windows, use `Get-FileHash <archive> -Algorithm SHA256` in PowerShell.
-The binaries are unsigned; macOS or Windows may require approval to run them.
+Extract the archive and run the executable once to install it:
+
+```sh
+# macOS / Linux — from the extracted folder
+./aditor --install
+
+# Open a new terminal, then:
+aditor --version
+aditor --update
+```
+
+```powershell
+# Windows PowerShell — from the extracted folder
+.\aditor.exe --install
+
+# Open a new terminal, then:
+aditor --version
+aditor --update
+```
+
+### Install once. Update in one command.
+
+`--install` copies the running executable to a per-user directory and configures PATH for new terminals:
+
+| Platform | Installation directory | PATH configuration |
+| --- | --- | --- |
+| macOS / Linux | `~/.local/bin` | Zsh: `.zshrc`; Bash: `.bashrc` and the existing login profile (`.bash_profile`, `.bash_login`, or `.profile`); Fish: `fish/conf.d/aditor.fish`; other shells: `.profile` |
+| Windows | `%LOCALAPPDATA%\Aditor\bin` | Windows user PATH, through PowerShell |
+
+Zsh respects `ZDOTDIR`; Fish respects `XDG_CONFIG_HOME`. Existing profile content is preserved and repeating installation does not add duplicate entries. Open a new terminal after installation: a child process cannot change the PATH of your current shell. No administrator privileges are needed for the default user directories.
+
+For a custom directory, or to manage PATH yourself:
+
+```sh
+./aditor --install --install-dir ./my-bin --no-modify-path --json
+```
+
+`--update` checks the latest published GitHub release for your OS and architecture, downloads its archive and `SHA256SUMS`, verifies SHA-256, and checks the downloaded binary's version before replacing the executable you ran. If that version is already installed, it exits successfully without downloading the archive. It updates **the running copy**, so install first if you want to update the CLI on your PATH. It does not update FFmpeg or ffprobe.
+
+```sh
+aditor --install --json
+aditor --update --json
+```
+
+Both commands support JSON results on stdout and return a nonzero exit code on failure. Installation and update are mutually exclusive and cannot be combined with a subcommand. Updates require network access and write permission to the executable's directory; unsupported architectures must update from source. Downloads or verification failures leave the current executable unchanged.
+
+Downloads include the README and license. [SHA256SUMS](https://github.com/victorlcampos/aditor/releases/latest/download/SHA256SUMS) contains checksums for all archives. On Linux, use `sha256sum --ignore-missing --check SHA256SUMS`; on macOS, use `shasum -a 256 <archive>` and compare the result. On Windows, use `Get-FileHash <archive> -Algorithm SHA256` in PowerShell. Binaries are unsigned; macOS or Windows may require approval to run them.
 
 To install from source, Rust and Cargo are required:
 

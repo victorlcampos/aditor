@@ -34,8 +34,10 @@ def release_notes(version, repository, commit):
         "",
         "### Install",
         "",
-        "Extract the archive, move `aditor` (or `aditor.exe`) onto your `PATH`, "
-        "and run `aditor --version`.",
+        "Extract the archive and run `./aditor --install` (macOS/Linux) or "
+        "`.\\aditor.exe --install` (Windows PowerShell). Open a new terminal, "
+        "then run `aditor --version`. Use `aditor --update` for future releases; "
+        "updates verify SHA-256 before replacing the CLI.",
         "",
         "FFmpeg is resolved at runtime and is not bundled. Browser tab capture "
         "requires Chrome, Chromium, or Edge with CDP enabled. Binaries are unsigned.",

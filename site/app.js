@@ -1,6 +1,16 @@
 'use strict';
 
 const examples = {
+  install: {
+    command: './aditor --install',
+    description: 'Install the extracted executable into your user directory and configure PATH for new terminals.',
+    prerequisite: 'macOS/Linux: run this inside the extracted folder. Windows PowerShell: use .\\aditor.exe --install. Then open a new terminal and run aditor --version.',
+  },
+  update: {
+    command: 'aditor --update',
+    description: 'Download the latest release, verify SHA-256 and its version, then replace the CLI you are running.',
+    prerequisite: 'Install first so you update the copy on your PATH. Requires internet access and write permission. Already current? The command exits without downloading the archive.',
+  },
   record: {
     command: 'aditor record --tab ABC123 \\\n  --duration 15 \\\n  -o demo.mp4 --json',
     description: 'Record 15 seconds of one browser tab and return the finished file as JSON.',

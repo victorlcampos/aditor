@@ -7,6 +7,7 @@
 
 mod browser;
 mod capture;
+mod maintenance;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -33,6 +34,9 @@ const EMBEDDED_FFPROBE: &[u8] = include_bytes!(env!("ADITOR_FFPROBE_BIN"));
     name = "aditor",
     version = env!("ADITOR_VERSION"),
     about = "Browser tab/screen capture, screenshots, and video editing from the CLI",
+    arg_required_else_help = true,
+    args_conflicts_with_subcommands = true,
+    group(clap::ArgGroup::new("maintenance").args(["install", "update"]).multiple(false)),
     after_help = "AGENT WORKFLOW:
   aditor screens --json                   List monitors (macOS)
   aditor tabs --json                      List tab IDs via CDP
@@ -46,8 +50,23 @@ Use aditor <command> --help for details and examples. --dry-run previews without
 Tabs: Chrome/Chromium/Edge with CDP enabled; see aditor tabs --help."
 )]
 struct Cli {
+    /// Install this executable for your user and configure PATH for new terminals
+    #[arg(long, group = "maintenance")]
+    install: bool,
+    /// Download, verify, and install the latest release over this executable
+    #[arg(long, group = "maintenance")]
+    update: bool,
+    /// Custom installation directory (use with --install)
+    #[arg(long, requires = "install", conflicts_with = "update")]
+    install_dir: Option<PathBuf>,
+    /// Copy the executable without changing shell profiles or the Windows user PATH
+    #[arg(long, requires = "install", conflicts_with = "update")]
+    no_modify_path: bool,
+    /// Print installation or update results as JSON
+    #[arg(long, requires = "maintenance")]
+    json: bool,
     #[command(subcommand)]
-    command: Cmd,
+    command: Option<Cmd>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -260,7 +279,16 @@ struct EncOpts {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    if cli.install {
+        return maintenance::install(cli.install_dir, cli.no_modify_path, cli.json);
+    }
+    if cli.update {
+        return maintenance::update(cli.json);
+    }
+    match cli
+        .command
+        .context("choose a command, --install, or --update")?
+    {
         Cmd::Info(a) => cmd_info(a),
         Cmd::Speed(a) => cmd_speed(a),
         Cmd::Cut(a) => cmd_cut(a),
@@ -1521,6 +1549,22 @@ mod cli_tests {
     #[test]
     fn cli_schema_is_consistent() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn maintenance_flags_are_exclusive_and_keep_subcommand_json_working() {
+        assert!(Cli::try_parse_from(["aditor", "--install", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["aditor", "--update", "--json"]).is_ok());
+        for args in [
+            vec!["aditor", "--install", "--update"],
+            vec!["aditor", "--install", "tabs"],
+            vec!["aditor", "--update", "--install-dir", "bin"],
+            vec!["aditor", "--no-modify-path"],
+            vec!["aditor", "--json"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
+        assert!(Cli::try_parse_from(["aditor", "tabs", "--json"]).is_ok());
     }
 
     #[test]

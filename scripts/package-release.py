@@ -1,6 +1,7 @@
 """Smoke-test and package a native release binary for GitHub Releases."""
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -20,6 +21,22 @@ def main():
     if actual != f"aditor {version}":
         raise RuntimeError(f"Unexpected CLI version: {actual!r}")
     subprocess.run([str(binary), "--help"], check=True, stdout=subprocess.DEVNULL)
+    # Exercise the installer on every release platform without changing user PATH.
+    with tempfile.TemporaryDirectory() as installation:
+        report = json.loads(subprocess.check_output([
+            str(binary), "--install", "--install-dir", installation,
+            "--no-modify-path", "--json",
+        ], text=True))
+        installed = Path(report["output"])
+        installed_version = subprocess.check_output([str(installed), "--version"], text=True).strip()
+        if installed_version != actual:
+            raise RuntimeError(f"Installed CLI version mismatch: {installed_version!r}")
+        repeated = json.loads(subprocess.check_output([
+            str(installed), "--install", "--install-dir", installation,
+            "--no-modify-path", "--json",
+        ], text=True))
+        if repeated["status"] != "already_installed":
+            raise RuntimeError("Installing the current binary should be idempotent")
 
     dist = Path("dist")
     dist.mkdir(exist_ok=True)

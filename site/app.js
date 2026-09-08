@@ -26,6 +26,21 @@ const examples = {
     description: 'Take a 10-second segment, play it at 2× speed, and remove the audio in a single command.',
     prerequisite: 'Use an existing input video. FFmpeg is resolved automatically. The output file must not already exist unless you pass --yes.',
   },
+  crop: {
+    "command": "aditor crop demo.mp4 \\\n  --from 2 --duration 10 \\\n  --width 640 --height 360 --x 100 --y 50 \\\n  -o cropped.mp4 --json",
+    "description": "Keep a time segment and crop a rectangle. Use timing or rectangle options independently, or combine them.",
+    "prerequisite": "Use an existing video. The rectangle must fit within it and have positive, even dimensions. Supports --dry-run and --yes."
+},
+  append: {
+    "command": "aditor append demo.mp4 title.png \\\n  --at 5 --duration 3 \\\n  -o combined.mp4 --json",
+    "description": "Insert an image for three seconds at second 5, then resume the original video. Replace title.png with extra.mp4 to insert footage.",
+    "prerequisite": "Images require --duration. Video inserts use their full duration unless limited. Inserts fit the original dimensions and frame rate; missing audio becomes silence."
+},
+  write: {
+    "command": "aditor write demo.mp4 --text \"Step 1\" \\\n  --from 2 --to 5 --x 40 --y 80 \\\n  --font-file /path/to/font.ttf \\\n  --font-size 48 --color \"white@0.8\" \\\n  -o labeled.mp4 --json",
+    "description": "Place text at a pixel position with a chosen font file, font size, color, and opacity. Use --frame 30 instead of the interval to label one frame (zero-based).",
+    "prerequisite": "Replace /path/to/font.ttf with a font file, or omit --font-file for the default font. Requires FFmpeg with drawtext. The end time is exclusive; --x and --y are measured from the left and top edges."
+},
   background: {
     command: 'aditor record --tab ABC123 \\\n  -o demo.mp4 --json\n\n# Later, use the returned recording ID:\naditor stop RECORDING_ID --json',
     description: 'Start recording in the background. Stop by session ID to finalize the MP4.',

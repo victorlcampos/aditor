@@ -214,9 +214,53 @@ aditor info input.mp4 --json
 aditor speed input.mp4 -x 1.5 -o faster.mp4 --json
 aditor cut input.mp4 --from 00:01:30 --duration 10 -o clip.mp4
 aditor edit input.mp4 --from 5 --duration 20 --speed 2 --mute -o edited.mp4
+# Keep a time segment, crop a rectangle, or combine both.
+aditor crop input.mp4 --from 5 --duration 10 -o clip.mp4
+aditor crop input.mp4 --width 640 --height 360 --x 100 --y 50 -o cropped.mp4
+
+# Insert footage at second 5, then resume the original video.
+aditor append input.mp4 extra.mp4 --at 5 -o combined.mp4
+aditor append input.mp4 title.png --at 5 --duration 3 -o titled.mp4
+
+# Frame indices start at zero; time intervals have an exclusive end.
+aditor write input.mp4 --text "Hello" --frame 30 -o labeled.mp4
+aditor write input.mp4 --text "Step 1" --from 2 --to 5 --x 20 --y 40 --font-size 32 -o steps.mp4
+aditor write input.mp4 --text "Custom title" --from 2 --to 5 \
+  --x 40 --y 80 --font-file /path/to/font.ttf --font-size 48 \
+  --color 'white@0.8' -o title.mp4
 aditor convert input.mp4 --codec hevc -o smaller.mp4
 aditor doctor --json
 ```
+
+`crop` accepts the same time notation as `cut` and can also crop a pixel rectangle.
+Rectangles must fit inside the source and have positive, even width and height.
+Time intervals must be nonempty and within the source duration.
+
+`append INPUT INSERT --at TIME` inserts content without replacing the original
+footage. Use `--at 0` to prepend or the original duration to insert at the end.
+PNG, JPEG, BMP, WebP, and TIFF inputs are treated as still images and require
+`--duration`; `--image --duration SECONDS` explicitly selects still-image mode.
+For video inserts, `--duration` limits the inserted clip. Inserts are fitted with
+black padding to the original dimensions and converted to the original frame rate.
+The first video/audio streams are used; audio is normalized to 48 kHz stereo,
+with silence filling segments that have no audio. If both inputs are silent,
+the result has no audio track.
+
+`write` burns literal UTF-8 text into a single `--frame`, a time interval, or the
+whole video when no timing is supplied. Use `--font-size`, `--color`, `--x`, `--y`,
+and `--font-file` to control appearance. Positions are pixels measured from the
+left and top edges, respectively (default: 20, 20). Font size defaults to 32
+pixels and color to white. Colors accept names, hex values, and opacity such as
+`white@0.8`. `--font-file` selects a font file; when omitted, FFmpeg selects its
+default font. It requires FFmpeg's `drawtext` filter;
+if unavailable, set `ADITOR_FFMPEG` to a build that includes it. See the
+[FFmpeg filter documentation](https://ffmpeg.org/ffmpeg-filters.html#drawtext).
+
+All three commands support the shared encoding options, `--json`, `--dry-run`,
+and `--yes`. They require encoding, so `--codec copy` is rejected. Output defaults
+to `<input-name>-crop.mp4`, `-append.mp4`, or `-write.mp4` beside the source.
+Input files cannot be overwritten in place. Dry runs inspect media metadata and
+print the FFmpeg command without producing output.
 
 ## Validation
 
@@ -225,12 +269,19 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo build
+python3 tests/editing_cli.py --aditor target/debug/aditor
 python3 tests/browser_cli.py \
   --browser '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
   --aditor target/debug/aditor
 ```
 
-The integration test starts headless Chrome with a temporary profile and checks tab selection, CSS selector cropping (dimensions and content), PNG output, overwriting, video duration, background/stop, errors, and dry runs. It does not use your personal browser profile. Requires Chrome/Chromium and FFmpeg/ffprobe on PATH.
+The editing integration test generates synthetic media and checks crop dimensions,
+insertion order and duration, audio/silence, timed text, dry runs, and invalid
+inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
+`--font-file /path/to/font.ttf` to select one explicitly. `ADITOR_FFMPEG` can select
+a separate FFmpeg build for the CLI under test.
+
+The browser integration test starts headless Chrome with a temporary profile and checks tab selection, CSS selector cropping (dimensions and content), PNG output, overwriting, video duration, background/stop, errors, and dry runs. It does not use your personal browser profile. Requires Chrome/Chromium and FFmpeg/ffprobe on PATH.
 
 ## Website
 

@@ -55,7 +55,7 @@
   <div class="section-heading"><p class="eyebrow">01 / THE WORKFLOW</p><h2>From “it works”<br>to <span class="muted">“watch this.”</span></h2><p>Make the output as useful as the work.<br>Three steps. One tool. Something to share.</p></div>
   <div class="feature-grid">
     <article><div class="feature-top"><span class="feature-icon" aria-hidden="true">⌗</span><span class="micro">01 — CAPTURE</span></div><h3>Pick the exact frame.</h3><p>A browser tab, a monitor, or one CSS-selected element. Capture what matters with explicit targets.</p><code>--tab ABC123 --selector '#player'</code></article>
-    <article><div class="feature-top"><span class="feature-icon" aria-hidden="true">↗</span><span class="micro">02 — EDIT</span></div><h3>Get to the good part.</h3><p>Trim the wait. Speed up the walkthrough. Remove the audio. Turn a recording into a focused demo.</p><code>--from 2 --duration 10 --speed 2</code></article>
+    <article><div class="feature-top"><span class="feature-icon" aria-hidden="true">↗</span><span class="micro">02 — EDIT</span></div><h3>Get to the good part.</h3><p>Trim and crop footage. Insert a video or image. Add positioned text with your font, size, and color. Turn a recording into a focused demo.</p><code>--from 2 --duration 10 --speed 2</code></article>
     <article><div class="feature-top"><span class="feature-icon" aria-hidden="true">{ }</span><span class="micro">03 — DELIVER</span></div><h3>Let your agent take it.</h3><p>JSON output, absolute capture paths, and meaningful exit codes. Ready for the next step in your script.</p><code>--json · --dry-run · --yes</code></article>
   </div>
 </section>
@@ -66,9 +66,12 @@
       <button type="button" id="tab-record" role="tab" aria-selected="true" aria-controls="command-panel" data-task="record"><span>01</span> Record a tab <span aria-hidden="true">↗</span></button>
       <button type="button" id="tab-screenshot" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="screenshot"><span>02</span> Capture an element <span aria-hidden="true">↗</span></button>
       <button type="button" id="tab-edit" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="edit"><span>03</span> Edit a video <span aria-hidden="true">↗</span></button>
-      <button type="button" id="tab-background" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="background"><span>04</span> Record in background <span aria-hidden="true">↗</span></button>
-      <button type="button" id="tab-install" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="install"><span>05</span> Install the CLI <span aria-hidden="true">↗</span></button>
-      <button type="button" id="tab-update" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="update"><span>06</span> Update the CLI <span aria-hidden="true">↗</span></button>
+      <button type="button" id="tab-crop" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="crop"><span>04</span> Crop a video <span aria-hidden="true">↗</span></button>
+      <button type="button" id="tab-append" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="append"><span>05</span> Insert video or image <span aria-hidden="true">↗</span></button>
+      <button type="button" id="tab-write" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="write"><span>06</span> Add styled text <span aria-hidden="true">↗</span></button>
+      <button type="button" id="tab-background" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="background"><span>07</span> Record in background <span aria-hidden="true">↗</span></button>
+      <button type="button" id="tab-install" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="install"><span>08</span> Install the CLI <span aria-hidden="true">↗</span></button>
+      <button type="button" id="tab-update" role="tab" aria-selected="false" aria-controls="command-panel" tabindex="-1" data-task="update"><span>09</span> Update the CLI <span aria-hidden="true">↗</span></button>
     </div><a href="https://github.com/victorlcampos/aditor#agent-interface">Explore the full CLI <span aria-hidden="true">→</span></a></div>
     <div class="command-panel" id="command-panel" role="tabpanel" aria-labelledby="tab-record" tabindex="0">
       <div class="code-header"><span class="micro">TERMINAL / EXAMPLE</span><button class="copy-button" id="copy-command" type="button">Copy command <span aria-hidden="true">⧉</span></button></div>

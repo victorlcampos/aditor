@@ -7,6 +7,7 @@
 
 mod browser;
 mod capture;
+mod editing;
 mod maintenance;
 
 use std::path::{Path, PathBuf};
@@ -77,6 +78,12 @@ enum Cmd {
     Speed(SpeedArgs),
     /// Cut a segment (--from/--to/--duration)
     Cut(CutArgs),
+    /// Trim time or crop a rectangular area of the video
+    Crop(editing::CropArgs),
+    /// Insert a video or still image at a timestamp
+    Append(editing::AppendArgs),
+    /// Draw literal text on a frame or time interval
+    Write(editing::WriteArgs),
     /// Single pipeline: trimming, speed, and codec in one pass
     Edit(EditArgs),
     /// Re-encode with a different codec without changing the content
@@ -238,7 +245,7 @@ struct FetchArgs {
 /// Shared output options.
 #[derive(Args, Debug, Clone)]
 struct OutOpts {
-    /// Output file. Default: speed/cut/edit/convert use
+    /// Output file. Default: editing commands use
     /// <name>-<op>.mp4 next to the input; captures use the directory shown in help
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -292,6 +299,9 @@ fn main() -> Result<()> {
         Cmd::Info(a) => cmd_info(a),
         Cmd::Speed(a) => cmd_speed(a),
         Cmd::Cut(a) => cmd_cut(a),
+        Cmd::Crop(a) => editing::crop(a),
+        Cmd::Append(a) => editing::append(a),
+        Cmd::Write(a) => editing::write(a),
         Cmd::Edit(a) => cmd_edit(a),
         Cmd::Convert(a) => cmd_convert(a),
         Cmd::Record(a) => cmd_record(a),

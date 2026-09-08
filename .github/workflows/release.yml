@@ -1,0 +1,102 @@
+name: Release CLI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+          rustup target add "${{ matrix.target }}"
+      - name: Set release version
+        run: |
+          base_version=$(cargo metadata --no-deps --format-version 1 --locked | python -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          echo "ADITOR_RELEASE_VERSION=${base_version}+build.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Run tests
+        run: cargo test --locked --target "${{ matrix.target }}"
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --target "${{ matrix.target }}" -- -D warnings
+      - name: Build release binary
+        run: cargo build --release --locked --target "${{ matrix.target }}"
+      - name: Package and smoke test
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: python scripts/package-release.py
+      - uses: actions/upload-artifact@v6
+        with:
+          name: aditor-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: aditor-*
+          path: dist
+          merge-multiple: true
+      - name: Publish archives and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          cat ./*.sha256 > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          version=$(cat version-*.txt | sort -u)
+          test "$(printf '%s\n' "$version" | wc -l)" -eq 1
+          tag="v${version}"
+          if gh release view "$tag" --json isDraft --jq '.isDraft' > is-draft.txt; then
+            if [ "$(cat is-draft.txt)" = false ]; then
+              echo "Release $tag is already published."
+              exit 0
+            fi
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --title "Aditor $tag" \
+              --notes "CLI binaries built from commit $GITHUB_SHA. See README.md for installation and runtime requirements." \
+              --draft
+          fi
+          gh release upload "$tag" ./*.tar.gz ./*.zip SHA256SUMS --clobber
+          latest=false
+          if [ "$(gh api "repos/$GH_REPO/commits/main" --jq '.sha')" = "$GITHUB_SHA" ]; then
+            latest=true
+          fi
+          gh release edit "$tag" --draft=false --latest="$latest"

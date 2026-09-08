@@ -31,7 +31,7 @@ const EMBEDDED_FFPROBE: &[u8] = include_bytes!(env!("ADITOR_FFPROBE_BIN"));
 #[derive(Parser, Debug)]
 #[command(
     name = "aditor",
-    version,
+    version = env!("ADITOR_VERSION"),
     about = "Browser tab/screen capture, screenshots, and video editing from the CLI",
     after_help = "AGENT WORKFLOW:
   aditor screens --json                   List monitors (macOS)

@@ -49,7 +49,24 @@ aditor edit demo.mp4 --from 2 --duration 10 --speed 2 --mute -o demo-final.mp4 -
 
 ## Get started
 
-Requires Rust and Cargo to compile. Install from source:
+Download a prebuilt CLI from [GitHub Releases](https://github.com/victorlcampos/aditor/releases/latest):
+
+| Operating system | Archive target |
+| --- | --- |
+| Linux x86_64 (Ubuntu 22.04 or newer) | `x86_64-unknown-linux-gnu.tar.gz` |
+| macOS Intel | `x86_64-apple-darwin.tar.gz` |
+| macOS Apple Silicon | `aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `x86_64-pc-windows-msvc.zip` |
+
+Extract the archive and move `aditor` (or `aditor.exe`) to a directory on your
+`PATH`. Run `aditor --version` to verify the installation. Downloads include the
+README and license; `SHA256SUMS` contains checksums for all archives. On Linux,
+verify your download with `sha256sum --ignore-missing --check SHA256SUMS`; on
+macOS, use `shasum -a 256 <archive>` and compare the result with `SHA256SUMS`.
+On Windows, use `Get-FileHash <archive> -Algorithm SHA256` in PowerShell.
+The binaries are unsigned; macOS or Windows may require approval to run them.
+
+To install from source, Rust and Cargo are required:
 
 ```sh
 git clone https://github.com/victorlcampos/aditor.git
@@ -65,7 +82,7 @@ cargo build --release --locked
 ./target/release/aditor --help
 ```
 
-The project is at version **0.1.0**. Tab capture uses Chrome, Chromium, or Edge with CDP enabled; screen capture requirements vary by operating system, as described below.
+Tab capture uses Chrome, Chromium, or Edge with CDP enabled; screen capture requirements vary by operating system, as described below.
 
 FFmpeg is resolved automatically (embedded, sidecar, PATH, or download). Set `ADITOR_FFMPEG` and `ADITOR_FFPROBE` to use specific binaries. Tab screenshots and tab listing use CDP directly, without FFmpeg.
 
@@ -169,6 +186,22 @@ python3 tests/browser_cli.py \
 The integration test starts headless Chrome with a temporary profile and checks tab selection, CSS selector cropping (dimensions and content), PNG output, overwriting, video duration, background/stop, errors, and dry runs. It does not use your personal browser profile. Requires Chrome/Chromium and FFmpeg/ffprobe on PATH.
 
 ## Contributing
+
+All project content and contribution metadata must be written in English; see
+[project rules](AGENTS.md).
+
+The `Release CLI` GitHub Actions workflow validates pull requests and publishes a
+release for the tip commit of every push to `main` after all four platform builds
+pass formatting, tests, Clippy, and CLI smoke checks. A push containing multiple
+commits produces one release for its final commit. No manual tag or version bump
+is needed. Releases use `<Cargo version>+build.<run number>.<short commit SHA>`
+(for example, `0.1.0+build.42.abcdef123456`), also shown by `aditor --version`.
+The suffix is SemVer build metadata; the base API version remains in `Cargo.toml`.
+Rerunning a workflow reuses the same release tag. Releases are assembled as drafts
+and published only after every archive and checksum has uploaded. Builds use the
+default features; FFmpeg is resolved at runtime and is not bundled in the archives.
+Publishing uses the built-in `GITHUB_TOKEN` with `contents: write`; no personal
+access token is required. GitHub Actions must be enabled for the repository.
 
 Have a capture or editing workflow you want to automate? [Open an issue](https://github.com/victorlcampos/aditor/issues) with your use case, operating system, and expected result. Fixes and improvements via pull request are welcome; run the checks above before submitting.
 

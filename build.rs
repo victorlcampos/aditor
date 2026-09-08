@@ -10,6 +10,10 @@
 //!     cargo build --release --features embed-ffmpeg
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=ADITOR_RELEASE_VERSION");
+    let version = std::env::var("ADITOR_RELEASE_VERSION")
+        .unwrap_or_else(|_| std::env::var("CARGO_PKG_VERSION").unwrap());
+    println!("cargo:rustc-env=ADITOR_VERSION={version}");
     println!("cargo:rerun-if-env-changed=ADITOR_FFMPEG_BIN");
     println!("cargo:rerun-if-env-changed=ADITOR_FFPROBE_BIN");
 

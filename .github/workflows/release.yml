@@ -115,9 +115,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           cd dist
-          cat ./*.sha256 > SHA256SUMS
+          cat ./*.sha256 | tr -d '\r' > SHA256SUMS
           sha256sum --check SHA256SUMS
-          version=$(cat version-*.txt | sort -u)
+          version=$(cat version-*.txt | tr -d '\r' | sort -u)
           test "$(printf '%s\n' "$version" | wc -l)" -eq 1
           tag="v${version}"
           python ../scripts/release-notes.py "$version" > release-notes.md

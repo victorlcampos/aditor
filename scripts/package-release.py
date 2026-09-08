@@ -39,10 +39,11 @@ def main():
             with tarfile.open(archive, "w:gz") as output:
                 output.add(package, arcname=name)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    (dist / f"{archive.name}.sha256").write_text(
-        f"{digest}  {archive.name}\n", encoding="utf-8"
+    # Metadata is consumed on Linux; write LF even when packaging on Windows.
+    (dist / f"{archive.name}.sha256").write_bytes(
+        f"{digest}  {archive.name}\n".encode("utf-8")
     )
-    (dist / f"version-{target}.txt").write_text(f"{version}\n", encoding="utf-8")
+    (dist / f"version-{target}.txt").write_bytes(f"{version}\n".encode("utf-8"))
 
 
 if __name__ == "__main__":

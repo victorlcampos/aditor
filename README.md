@@ -10,12 +10,15 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/victorlcampos/aditor/actions/workflows/release.yml"><img src="https://github.com/victorlcampos/aditor/actions/workflows/release.yml/badge.svg?branch=main" alt="Build and release status"></a>
+  <a href="https://github.com/victorlcampos/aditor/releases/latest"><img src="https://img.shields.io/github/v/release/victorlcampos/aditor?label=download&color=ff7900" alt="Download latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/built_with-Rust-orange" alt="Built with Rust">
   <img src="https://img.shields.io/badge/interface-CLI_%2B_JSON-222222" alt="CLI and JSON">
 </p>
 
 <p align="center">
+  <a href="https://github.com/victorlcampos/aditor/releases/latest"><strong>Download latest</strong></a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#browser-tabs">Capture a tab</a> ·
   <a href="#video-editing">Edit videos</a> ·
@@ -49,14 +52,16 @@ aditor edit demo.mp4 --from 2 --duration 10 --speed 2 --mute -o demo-final.mp4 -
 
 ## Get started
 
-Download a prebuilt CLI from [GitHub Releases](https://github.com/victorlcampos/aditor/releases/latest):
+**[Download the latest release](https://github.com/victorlcampos/aditor/releases/latest)** — ready-to-run binaries, no Rust installation required.
 
-| Operating system | Archive target |
+| Operating system | Download latest |
 | --- | --- |
-| Linux x86_64 (Ubuntu 22.04 or newer) | `x86_64-unknown-linux-gnu.tar.gz` |
-| macOS Intel | `x86_64-apple-darwin.tar.gz` |
-| macOS Apple Silicon | `aarch64-apple-darwin.tar.gz` |
-| Windows x86_64 | `x86_64-pc-windows-msvc.zip` |
+| macOS Apple Silicon | [Download ARM64](https://github.com/victorlcampos/aditor/releases/latest/download/aditor-aarch64-apple-darwin.tar.gz) |
+| macOS Intel | [Download x86_64](https://github.com/victorlcampos/aditor/releases/latest/download/aditor-x86_64-apple-darwin.tar.gz) |
+| Linux x86_64 (Ubuntu 22.04 or newer) | [Download Linux](https://github.com/victorlcampos/aditor/releases/latest/download/aditor-x86_64-unknown-linux-gnu.tar.gz) |
+| Windows x86_64 | [Download Windows](https://github.com/victorlcampos/aditor/releases/latest/download/aditor-x86_64-pc-windows-msvc.zip) |
+
+These links always resolve to the latest published release. [Download SHA256SUMS](https://github.com/victorlcampos/aditor/releases/latest/download/SHA256SUMS) to verify your archive.
 
 Extract the archive and move `aditor` (or `aditor.exe`) to a directory on your
 `PATH`. Run `aditor --version` to verify the installation. Downloads include the
@@ -175,8 +180,9 @@ aditor doctor --json
 ## Validation
 
 ```sh
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
 cargo build
 python3 tests/browser_cli.py \
   --browser '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
@@ -194,10 +200,13 @@ The `Release CLI` GitHub Actions workflow validates pull requests and publishes 
 release for the tip commit of every push to `main` after all four platform builds
 pass formatting, tests, Clippy, and CLI smoke checks. A push containing multiple
 commits produces one release for its final commit. No manual tag or version bump
-is needed. Releases use `<Cargo version>+build.<run number>.<short commit SHA>`
+is needed. You can also trigger a build using **Run workflow** on `main`. Releases use `<Cargo version>+build.<run number>.<short commit SHA>`
 (for example, `0.1.0+build.42.abcdef123456`), also shown by `aditor --version`.
 The suffix is SemVer build metadata; the base API version remains in `Cargo.toml`.
-Rerunning a workflow reuses the same release tag. Releases are assembled as drafts
+Rerunning a workflow reuses the same release tag. Archive names stay constant across
+versions so the direct download links above never need to change. Each binary
+reports its exact release version. Build caches speed up subsequent runs, and
+the Actions summary includes checksums and download links. Releases are assembled as drafts
 and published only after every archive and checksum has uploaded. Builds use the
 default features; FFmpeg is resolved at runtime and is not bundled in the archives.
 Publishing uses the built-in `GITHUB_TOKEN` with `contents: write`; no personal

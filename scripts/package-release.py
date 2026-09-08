@@ -23,7 +23,8 @@ def main():
 
     dist = Path("dist")
     dist.mkdir(exist_ok=True)
-    name = f"aditor-{version}-{target}"
+    # Keep asset names stable so /releases/latest/download/<asset> always works.
+    name = f"aditor-{target}"
     archive = dist / (name + (".zip" if windows else ".tar.gz"))
     with tempfile.TemporaryDirectory() as temporary:
         package = Path(temporary) / name

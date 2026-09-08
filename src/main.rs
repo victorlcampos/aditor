@@ -770,7 +770,7 @@ fn load_sessions() -> Result<Vec<(PathBuf, RecSession)>> {
             }
         }
     }
-    out.sort_by(|a, b| a.1.started_epoch.cmp(&b.1.started_epoch));
+    out.sort_by_key(|entry| entry.1.started_epoch);
     Ok(out)
 }
 

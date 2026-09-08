@@ -1,10 +1,12 @@
 name: Release CLI
+run-name: Build and release · ${{ github.event.head_commit.message || github.ref_name }}
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +19,7 @@ jobs:
   build:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -34,10 +37,23 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust
+        id: rust
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
           rustup target add "${{ matrix.target }}"
+          echo "version=$(rustc --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
+      - name: Cache Rust dependencies and build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ matrix.target }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-${{ matrix.target }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-
+            rust-${{ matrix.target }}-${{ steps.rust.outputs.version }}-
       - name: Set release version
         run: |
           base_version=$(cargo metadata --no-deps --format-version 1 --locked | python -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
@@ -59,15 +75,35 @@ jobs:
           name: aditor-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Summarize build
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          {
+            echo "### $RELEASE_TARGET"
+            echo "Version: \`$ADITOR_RELEASE_VERSION\`"
+            echo ""
+            echo "Formatting, tests, Clippy, release build, and CLI smoke checks passed."
+            echo ""
+            echo '```text'
+            cat dist/*.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish GitHub release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v5
         with:
           pattern: aditor-*
@@ -84,6 +120,7 @@ jobs:
           version=$(cat version-*.txt | sort -u)
           test "$(printf '%s\n' "$version" | wc -l)" -eq 1
           tag="v${version}"
+          python ../scripts/release-notes.py "$version" > release-notes.md
           if gh release view "$tag" --json isDraft --jq '.isDraft' > is-draft.txt; then
             if [ "$(cat is-draft.txt)" = false ]; then
               echo "Release $tag is already published."
@@ -91,7 +128,7 @@ jobs:
             fi
           else
             gh release create "$tag" --target "$GITHUB_SHA" --title "Aditor $tag" \
-              --notes "CLI binaries built from commit $GITHUB_SHA. See README.md for installation and runtime requirements." \
+              --notes-file release-notes.md --generate-notes \
               --draft
           fi
           gh release upload "$tag" ./*.tar.gz ./*.zip SHA256SUMS --clobber
@@ -100,3 +137,8 @@ jobs:
             latest=true
           fi
           gh release edit "$tag" --draft=false --latest="$latest"
+          {
+            cat release-notes.md
+            echo ""
+            echo "[View this release](https://github.com/$GH_REPO/releases/tag/$tag) · [Download latest](https://github.com/$GH_REPO/releases/latest)"
+          } >> "$GITHUB_STEP_SUMMARY"

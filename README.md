@@ -18,6 +18,7 @@
 </p>
 
 <p align="center">
+  <a href="https://victorlcampos.github.io/aditor/"><strong>Website</strong></a> ·
   <a href="https://github.com/victorlcampos/aditor/releases/latest"><strong>Download latest</strong></a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#browser-tabs">Capture a tab</a> ·
@@ -190,6 +191,12 @@ python3 tests/browser_cli.py \
 ```
 
 The integration test starts headless Chrome with a temporary profile and checks tab selection, CSS selector cropping (dimensions and content), PNG output, overwriting, video duration, background/stop, errors, and dry runs. It does not use your personal browser profile. Requires Chrome/Chromium and FFmpeg/ffprobe on PATH.
+
+## Website
+
+Visit [aditor on GitHub Pages](https://victorlcampos.github.io/aditor/) for an interactive command guide and downloads for every platform.
+
+The static website lives in `site/` and is published by `.github/workflows/pages.yml` on pushes to `main`. Preview it locally with `python3 -m http.server 8087 --directory site`. No package installation or site build is required. The release label is fetched from GitHub when available; download links always point to the latest published release, even if the metadata request fails.
 
 ## Contributing
 

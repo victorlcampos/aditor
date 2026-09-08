@@ -116,17 +116,6 @@ A captura recorta o retângulo do elemento, incluindo sua borda, mesmo fora do v
 
 Durante o vídeo, o seletor e o retângulo são reavaliados a cada frame. Para recorte preciso, prefira um contêiner de posição fixa com conteúdo animado: movimentos rápidos do próprio contêiner entre a medição e a captura podem incluir bordas do fundo. Mantenha as dimensões do elemento fixas: se ele mudar de tamanho, desaparecer ou ficar oculto, a gravação termina com erro e finaliza o trecho já capturado. Vídeos podem receber até um pixel de preenchimento para manter dimensões pares exigidas pelo codec. `--dry-run --json` inclui o seletor no plano sem conectar ao navegador.
 
-### Capture só o elemento que importa
-
-Use um seletor CSS para isolar um player, gráfico ou componente:
-
-```sh
-aditor screenshot --tab ABC123 --selector '#player' -o player.png --json
-aditor record --tab ABC123 --selector '#player' --duration 10 -o player.mp4 --json
-```
-
-O seletor deve corresponder a um único elemento visível no documento principal; não atravessa iframes ou shadow DOM. A gravação acompanha a posição do elemento, mas exige tamanho constante. Se ele desaparecer, ficar oculto ou mudar de tamanho, a captura termina com erro.
-
 ## Monitores e prints
 
 No macOS, liste os índices de captura antes de escolher o monitor:

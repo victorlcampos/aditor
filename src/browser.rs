@@ -1,4 +1,4 @@
-//! Captura CDP local: seleciona o target pelo ID, sem foco nem seletor visual.
+//! Local CDP capture: select the target by ID, without changing focus or opening a visual picker.
 use super::*;
 use base64::Engine;
 use serde_json::{json, Value};
@@ -9,13 +9,13 @@ use tungstenite::{Message, WebSocket};
 
 #[derive(Args, Debug)]
 #[command(
-    after_help = "CONFIGURAÇÃO (Chrome/Chromium/Edge):\n  Inicie o browser com --remote-debugging-port=9222 e um perfil separado.\n  macOS:\n    \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" \\\n      --remote-debugging-port=9222 --user-data-dir=/tmp/aditor-chrome\n  Linux:\n    google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/aditor-chrome\n  Windows (PowerShell):\n    & \"$env:ProgramFiles/Google/Chrome/Application/chrome.exe\" --remote-debugging-port=9222 --user-data-dir=\"$env:TEMP/aditor-chrome\"\n\nAbra a página nesse browser e use o ID exato de tabs --json:\n  aditor tabs --cdp-port 9222 --json\n  aditor record --tab <ID> --duration 10 --json\n  aditor screenshot --tab <ID> -o aba.png --json\n\nA conexão é local (127.0.0.1); não abre nem troca abas. Chrome exige perfil\nseparado do perfil padrão para CDP. Safari/Firefox não são suportados.\nA captura inclui só o viewport, sem barras do navegador e sem áudio.\nNão requer que a aba esteja em primeiro plano; o browser precisa estar em execução."
+    after_help = "SETUP (Chrome/Chromium/Edge):\n  Start the browser with --remote-debugging-port=9222 and a separate profile.\n  macOS:\n    \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" \\\n      --remote-debugging-port=9222 --user-data-dir=/tmp/aditor-chrome\n  Linux:\n    google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/aditor-chrome\n  Windows (PowerShell):\n    & \"$env:ProgramFiles/Google/Chrome/Application/chrome.exe\" --remote-debugging-port=9222 --user-data-dir=\"$env:TEMP/aditor-chrome\"\n\nOpen the page in that browser and use the exact ID from tabs --json:\n  aditor tabs --cdp-port 9222 --json\n  aditor record --tab <ID> --duration 10 --json\n  aditor screenshot --tab <ID> -o tab.png --json\n\nThe connection is local (127.0.0.1); it does not open or switch tabs. Chrome requires a profile\nseparate from the default profile for CDP. Safari/Firefox are not supported.\nCapture includes only the viewport, without browser chrome or audio.\nThe tab does not need to be in the foreground; the browser must be running."
 )]
 pub struct TabsArgs {
-    /// Porta CDP local do navegador
+    /// Local browser CDP port
     #[arg(long, default_value_t = 9222, value_parser = clap::value_parser!(u16).range(1..))]
     pub cdp_port: u16,
-    /// Array JSON com id, title e url de cada aba
+    /// JSON array with each tab's id, title, and url
     #[arg(long)]
     pub json: bool,
 }
@@ -41,10 +41,9 @@ fn list_tabs(port: u16) -> Result<Vec<Tab>> {
     let agent: ureq::Agent = config.into();
     let raw = agent.get(format!("http://127.0.0.1:{port}/json/list"))
         .call()
-        .with_context(|| format!("não foi possível conectar ao CDP em 127.0.0.1:{port}; inicie Chrome/Chromium/Edge com --remote-debugging-port={port} e --user-data-dir de um perfil separado (aditor tabs --help)"))?
+        .with_context(|| format!("could not connect to CDP at 127.0.0.1:{port}; start Chrome/Chromium/Edge with --remote-debugging-port={port} and --user-data-dir pointing to a separate profile (aditor tabs --help)"))?
         .body_mut().read_to_string()?;
-    let tabs: Vec<Tab> =
-        serde_json::from_str(&raw).context("resposta inválida de /json/list do CDP")?;
+    let tabs: Vec<Tab> = serde_json::from_str(&raw).context("invalid CDP /json/list response")?;
     Ok(tabs.into_iter().filter(|t| t.kind == "page").collect())
 }
 
@@ -53,7 +52,7 @@ pub fn tabs(a: TabsArgs) -> Result<()> {
     if a.json {
         println!("{}", serde_json::to_string_pretty(&tabs)?);
     } else if tabs.is_empty() {
-        println!("nenhuma aba disponível; abra uma página no browser com CDP");
+        println!("no tabs available; open a page in the CDP-enabled browser");
     } else {
         for tab in tabs {
             println!("{}\t{}\t{}", tab.id, tab.title, tab.url);
@@ -70,18 +69,24 @@ struct Cdp {
 
 impl Cdp {
     fn connect(port: u16, tab_id: &str) -> Result<Self> {
-        let tab = list_tabs(port)?.into_iter().find(|t| t.id == tab_id)
-            .with_context(|| format!("aba `{tab_id}` não encontrada; liste IDs com aditor tabs --cdp-port {port} --json"))?;
+        let tab = list_tabs(port)?
+            .into_iter()
+            .find(|t| t.id == tab_id)
+            .with_context(|| {
+                format!(
+                    "tab `{tab_id}` not found; list IDs with aditor tabs --cdp-port {port} --json"
+                )
+            })?;
         let url = tab
             .websocket
-            .context("aba sem webSocketDebuggerUrl; não permite captura via CDP")?;
-        // Mesmo que /json/list contenha outro host, nunca conectamos fora do loopback.
+            .context("tab has no webSocketDebuggerUrl; CDP capture is unavailable")?;
+        // Even if /json/list contains another host, never connect outside loopback.
         let address = SocketAddr::from(([127, 0, 0, 1], port));
         let stream = TcpStream::connect_timeout(&address, Duration::from_secs(5))?;
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
         let (socket, _) =
-            tungstenite::client(url.as_str(), stream).context("conectar ao WebSocket da aba")?;
+            tungstenite::client(url.as_str(), stream).context("connect to the tab WebSocket")?;
         Ok(Self {
             socket,
             next_id: 0,
@@ -100,12 +105,12 @@ impl Cdp {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if Instant::now() > deadline {
-                bail!("CDP não respondeu a {method} em 15s");
+                bail!("CDP did not respond to {method} within 15s");
             }
             match self
                 .socket
                 .read()
-                .with_context(|| format!("ler {method}; a aba pode ter sido fechada"))?
+                .with_context(|| format!("read {method}; the tab may have been closed"))?
             {
                 Message::Text(text) => {
                     let value: Value = serde_json::from_str(&text)?;
@@ -116,10 +121,10 @@ impl Cdp {
                         return value
                             .get("result")
                             .cloned()
-                            .context("CDP retornou resposta sem result");
+                            .context("CDP returned a response without result");
                     }
                 }
-                Message::Close(_) => bail!("conexão CDP encerrada; a aba pode ter sido fechada"),
+                Message::Close(_) => bail!("CDP connection closed; the tab may have been closed"),
                 Message::Ping(_) => self.socket.flush()?,
                 _ => {}
             }
@@ -138,7 +143,7 @@ impl Cdp {
             json!({"expression": expression, "returnByValue": true}),
         )?;
         if let Some(error) = result.get("exceptionDetails") {
-            bail!("não foi possível localizar --selector {selector:?}: {error}");
+            bail!("could not locate --selector {selector:?}: {error}");
         }
         let clip = &result["result"]["value"];
         if let Some(error) = clip["error"].as_str() {
@@ -147,9 +152,9 @@ impl Cdp {
         for key in ["x", "y", "width", "height"] {
             let value = clip[key]
                 .as_f64()
-                .with_context(|| format!("limites inválidos para --selector {selector:?}"))?;
+                .with_context(|| format!("invalid bounds for --selector {selector:?}"))?;
             if !value.is_finite() || (matches!(key, "width" | "height") && value <= 0.0) {
-                bail!("elemento sem área capturável: {selector:?}");
+                bail!("element has no capturable area: {selector:?}");
             }
         }
         Ok(clip.clone())
@@ -166,7 +171,7 @@ impl Cdp {
                     clip["height"].as_f64().unwrap(),
                 );
                 if self.element_size.is_some_and(|initial| initial != size) {
-                    bail!("o elemento {selector:?} mudou de tamanho durante a gravação; mantenha dimensões fixas e reinicie a captura");
+                    bail!("element {selector:?} changed size during recording; keep dimensions fixed and restart capture");
                 }
                 self.element_size = Some(size);
             }
@@ -179,12 +184,12 @@ impl Cdp {
         let result = self.call("Page.captureScreenshot", params)?;
         let data = result["data"]
             .as_str()
-            .context("CDP não retornou a imagem da aba")?;
+            .context("CDP did not return the tab image")?;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data)
-            .context("imagem CDP em base64 inválida")?;
+            .context("invalid base64 CDP image")?;
         if bytes.is_empty() {
-            bail!("CDP retornou imagem vazia");
+            bail!("CDP returned an empty image");
         }
         Ok(bytes)
     }
@@ -243,7 +248,7 @@ pub fn record(
                 "output": output, "tab": tab, "selector": a.source.selector, "cdp_port": a.source.cdp_port, "fps": a.fps,
                 "duration": duration, "background": duration.is_none(), "audio": false,
                 "method": "Page.captureScreenshot", "ffmpeg_cmd": cmd,
-                "input": "JPEG frames da aba via CDP em pipe:0", "dry_run": true
+                "input": "JPEG tab frames via CDP on pipe:0", "dry_run": true
             }))?
         );
         return Ok(());
@@ -292,7 +297,7 @@ pub fn record(
         if let Some(status) = child.try_wait()? {
             let tail = tail_file(&log_path, 20);
             cleanup_worker(&config_path);
-            bail!("captura da aba falhou ao iniciar ({status}):\n{tail}");
+            bail!("tab capture failed to start ({status}):\n{tail}");
         }
         if config_path.with_extension("ready").exists() {
             break;
@@ -303,7 +308,7 @@ pub fn record(
             let _ = child.wait();
             cleanup_worker(&config_path);
             bail!(
-                "captura da aba não iniciou em 30s; veja {}",
+                "tab capture did not start within 30s; see {}",
                 log_path.display()
             );
         }
@@ -335,14 +340,14 @@ pub fn record(
         );
     } else {
         println!(
-            "gravando aba {tab} em background — id {id}\nsaída: {}\npare com: aditor stop {id}",
+            "recording tab {tab} in the background — id {id}\noutput: {}\nstop with: aditor stop {id}",
             output.display()
         );
     }
     Ok(())
 }
 
-// Fecha stdin antes de wait: FFmpeg recebe EOF e finaliza o MP4 sem sinais.
+// Close stdin before wait: FFmpeg receives EOF and finalizes the MP4 without signals.
 fn run_worker(config: &WorkerConfig, state: Option<&Path>) -> Result<()> {
     let mut cdp = Cdp::connect(config.port, &config.tab)?;
     let mut frame = cdp.frame("jpeg", config.selector.as_deref())?;
@@ -352,7 +357,7 @@ fn run_worker(config: &WorkerConfig, state: Option<&Path>) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()?;
-    let mut input = encoder.stdin.take().context("abrir stdin do ffmpeg")?;
+    let mut input = encoder.stdin.take().context("open ffmpeg stdin")?;
     let result = (|| -> Result<()> {
         let start = Instant::now();
         let mut written = 0u64;
@@ -360,16 +365,14 @@ fn run_worker(config: &WorkerConfig, state: Option<&Path>) -> Result<()> {
             .duration
             .map(|d| (d * config.fps as f64).ceil() as u64);
         loop {
-            // Se CDP demora, repete o último frame para preservar o tempo real.
+            // If CDP is slow, repeat the last frame to preserve real-time duration.
             let wanted = frames_due(start.elapsed(), config.fps, max_frames);
             while written < wanted {
-                input
-                    .write_all(&frame)
-                    .context("enviar frame para ffmpeg")?;
+                input.write_all(&frame).context("send frame to ffmpeg")?;
                 written += 1;
             }
             if let Some(status) = encoder.try_wait()? {
-                bail!("ffmpeg encerrou durante a captura: {status}");
+                bail!("ffmpeg exited during capture: {status}");
             }
             if let Some(path) = state {
                 if start.elapsed() >= Duration::from_secs(1)
@@ -393,10 +396,10 @@ fn run_worker(config: &WorkerConfig, state: Option<&Path>) -> Result<()> {
         Ok(())
     })();
     drop(input);
-    let status = encoder.wait().context("finalizar ffmpeg")?;
+    let status = encoder.wait().context("finalize ffmpeg")?;
     result?;
     if !status.success() {
-        bail!("ffmpeg falhou ao finalizar captura da aba: {status}");
+        bail!("ffmpeg failed to finalize tab capture: {status}");
     }
     Ok(())
 }
@@ -413,7 +416,7 @@ pub fn worker_entry(path: &Path) -> Result<()> {
         Ok(()) => json!({"ok": true}),
         Err(e) => json!({"ok": false, "error": format!("{e:#}")}),
     };
-    // Publica o resultado de forma atômica, somente depois de finalizar o encoder.
+    // Publish the result atomically, only after the encoder has finished.
     let tmp = path.with_extension("done.tmp");
     std::fs::write(&tmp, serde_json::to_vec(&done)?)?;
     std::fs::rename(tmp, path.with_extension("done"))?;
@@ -425,20 +428,20 @@ pub fn stop_worker(path: &Path, pid: u32) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(30);
     let done_path = path.with_extension("done");
     while !done_path.exists() {
-        // O worker pode publicar done e sair entre as duas verificações.
+        // The worker may publish done and exit between the two checks.
         if !pid_alive(pid) && !done_path.exists() {
-            bail!("processo da captura terminou sem confirmar o vídeo; confira o log da sessão");
+            bail!("capture process exited without confirming the video; check the session log");
         }
         if Instant::now() > deadline {
-            bail!("captura ainda está finalizando; tente aditor stop novamente. Sessão preservada");
+            bail!("capture is still finalizing; try aditor stop again. Session preserved");
         }
         std::thread::sleep(Duration::from_millis(100));
     }
     let done: Value = serde_json::from_slice(&std::fs::read(done_path)?)?;
     if done["ok"] != true {
         bail!(
-            "captura da aba falhou: {}",
-            done["error"].as_str().unwrap_or("erro desconhecido")
+            "tab capture failed: {}",
+            done["error"].as_str().unwrap_or("unknown error")
         );
     }
     cleanup_worker(path);
@@ -462,10 +465,10 @@ mod tests {
     }
     #[test]
     fn tab_json_exposes_only_agent_selection_fields() {
-        let tab: Tab = serde_json::from_value(json!({"id":"ABC", "type":"page", "title":"Teste", "url":"about:blank", "webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/ABC"})).unwrap();
+        let tab: Tab = serde_json::from_value(json!({"id":"ABC", "type":"page", "title":"Test", "url":"about:blank", "webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/ABC"})).unwrap();
         assert_eq!(
             serde_json::to_value(tab).unwrap(),
-            json!({"id":"ABC", "title":"Teste", "url":"about:blank"})
+            json!({"id":"ABC", "title":"Test", "url":"about:blank"})
         );
     }
 }

@@ -2,7 +2,7 @@
 name = "aditor"
 version = "0.1.0"
 edition = "2021"
-description = "Agentic Editor — CLI rápido para cortes/aceleração de vídeo (binário único, self-contained)"
+description = "Agentic Editor — Rust CLI for browser and screen capture, screenshots, and video editing"
 license = "MIT"
 
 [features]

@@ -1,9 +1,9 @@
 //! aditor — Agentic Editor.
 //!
-//! CLI pensada para ser operada por um agente: comandos previsíveis,
-//! `--json` para saída parseável, `--dry-run` para inspecionar o ffmpeg
-//! gerado, `--yes` para sobrescrever, e binário único que resolve o
-//! ffmpeg sozinho (sistema → sidecar → auto-download → embutido).
+//! CLI designed for agents: predictable commands,
+//! `--json` for machine-readable output, `--dry-run` to inspect the generated
+//! command, `--yes` to overwrite files, and a single binary that resolves
+//! FFmpeg automatically (embedded → sidecar → PATH → download).
 
 mod browser;
 mod capture;
@@ -16,7 +16,7 @@ use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// Binários embutidos (feature `embed-ffmpeg`, build offline-capable)
+// Embedded binaries (`embed-ffmpeg` feature, offline-capable build)
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "embed-ffmpeg")]
@@ -32,18 +32,18 @@ const EMBEDDED_FFPROBE: &[u8] = include_bytes!(env!("ADITOR_FFPROBE_BIN"));
 #[command(
     name = "aditor",
     version,
-    about = "Captura de abas/telas, prints e edição de vídeo via CLI",
-    after_help = "FLUXO PARA AGENTES:
-  aditor screens --json                   Lista monitores (macOS)
-  aditor tabs --json                      Lista IDs das abas via CDP
-  aditor record --tab <ID> --json          Grava só a aba em background
-  aditor stop <ID_DA_GRAVACAO> --json      Finaliza e retorna o vídeo
-  aditor record --screen 1 --duration 10   Grava o segundo monitor
-  aditor screenshot --tab <ID> -o aba.png  Tira um print da aba
-  aditor screenshot --screen 0 --json     Tira um print do monitor
+    about = "Browser tab/screen capture, screenshots, and video editing from the CLI",
+    after_help = "AGENT WORKFLOW:
+  aditor screens --json                   List monitors (macOS)
+  aditor tabs --json                      List tab IDs via CDP
+  aditor record --tab <ID> --json          Record only this tab in the background
+  aditor stop <RECORDING_ID> --json      Finalize and return the video
+  aditor record --screen 1 --duration 10   Record the second monitor
+  aditor screenshot --tab <ID> -o tab.png  Take a tab screenshot
+  aditor screenshot --screen 0 --json     Take a monitor screenshot
 
-Use aditor <comando> --help para detalhes e exemplos. --dry-run inspeciona sem capturar.
-Abas: Chrome/Chromium/Edge com CDP habilitado; veja aditor tabs --help."
+Use aditor <command> --help for details and examples. --dry-run previews without capturing.
+Tabs: Chrome/Chromium/Edge with CDP enabled; see aditor tabs --help."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -52,39 +52,39 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Mostra metadados do vídeo (duração, streams, codec, dimensões)
+    /// Show video metadata (duration, streams, codec, dimensions)
     Info(InfoArgs),
-    /// Acelera/desacelera vídeo + áudio sincronizados (ex.: -x 1.5)
+    /// Speed up/slow down video with synchronized audio (e.g. -x 1.5)
     Speed(SpeedArgs),
-    /// Corta um trecho (--from/--to/--duration)
+    /// Cut a segment (--from/--to/--duration)
     Cut(CutArgs),
-    /// Pipeline único: corte + velocidade + codec numa passada só
+    /// Single pipeline: trimming, speed, and codec in one pass
     Edit(EditArgs),
-    /// Recomprime para um codec melhor sem mudar conteúdo
+    /// Re-encode with a different codec without changing the content
     Convert(ConvertArgs),
-    /// Grava uma aba (--tab) ou monitor (--screen); padrão ~/Documents/Videos
+    /// Record a tab (--tab) or monitor (--screen); default: ~/Documents/Videos
     Record(RecordArgs),
-    /// Tira um print PNG de uma aba ou tela
+    /// Take a PNG screenshot of a tab or screen
     #[command(visible_alias = "print")]
     Screenshot(capture::ScreenshotArgs),
-    /// Lista monitores e seus índices para --screen (macOS)
+    /// List monitors and their indices for --screen (macOS)
     Screens(capture::ScreensArgs),
-    /// Lista abas do Chrome/Chromium/Edge por ID, título e URL
+    /// List Chrome/Chromium/Edge tabs by ID, title, and URL
     Tabs(browser::TabsArgs),
     #[command(hide = true, name = "__record-tab")]
     RecordTabWorker { config: PathBuf },
-    /// Para uma gravação iniciada por `aditor record` e devolve o caminho do vídeo
+    /// Stop a recording started by `aditor record` and return the video path
     Stop(StopArgs),
-    /// Diagnóstico: onde estão ffmpeg/ffprobe, versão, encoders
+    /// Diagnostics: ffmpeg/ffprobe locations, versions, and encoders
     Doctor(DoctorArgs),
-    /// Baixa build estática de ffmpeg/ffprobe (p/ embed ou uso local)
+    /// Download a static ffmpeg/ffprobe build (for embedding or local use)
     FetchFfmpeg(FetchArgs),
 }
 
 #[derive(Args, Debug)]
 struct InfoArgs {
     input: PathBuf,
-    /// Saída machine-readable
+    /// Machine-readable output
     #[arg(long, default_value_t = false)]
     json: bool,
 }
@@ -92,14 +92,14 @@ struct InfoArgs {
 #[derive(Args, Debug)]
 struct SpeedArgs {
     input: PathBuf,
-    /// Fator de velocidade (0.25 – 16). Ex.: 1.5 = 50% mais rápido
+    /// Speed factor (0.25–16). Example: 1.5 = 50% faster
     #[arg(short = 'x', long)]
     factor: f64,
     #[command(flatten)]
     out: OutOpts,
     #[command(flatten)]
     enc: EncOpts,
-    /// Remove o áudio
+    /// Remove audio
     #[arg(long, default_value_t = false)]
     mute: bool,
 }
@@ -107,13 +107,13 @@ struct SpeedArgs {
 #[derive(Args, Debug)]
 struct CutArgs {
     input: PathBuf,
-    /// Início: segundos ou HH:MM:SS.mmm (ex.: 90, 1:30, 00:01:30.5)
+    /// Start: seconds or HH:MM:SS.mmm (e.g. 90, 1:30, 00:01:30.5)
     #[arg(long)]
     from: Option<String>,
-    /// Fim (exclusivo com --duration)
+    /// End (mutually exclusive with --duration)
     #[arg(long)]
     to: Option<String>,
-    /// Duração a partir de --from
+    /// Duration starting at --from
     #[arg(long)]
     duration: Option<String>,
     #[command(flatten)]
@@ -151,37 +151,37 @@ struct ConvertArgs {
 }
 
 #[derive(Args, Debug)]
-#[command(after_help = "EXEMPLOS:
-  aditor record --tab <ID> --duration 10 -o aba.mp4 --json
+#[command(after_help = "EXAMPLES:
+  aditor record --tab <ID> --duration 10 -o tab.mp4 --json
   aditor record --screen 1 --json
-  aditor stop <ID_DA_GRAVACAO> --json
+  aditor stop <RECORDING_ID> --json
 
-Sem --duration: inicia em background e retorna um ID para stop.
-Com --duration: aguarda a conclusão. Nunca abre um seletor visual.
---tab captura o conteúdo visível da aba, sem barras do browser e sem áudio.
---selector '#player' recorta um elemento único; o retângulo é recalculado a cada frame.\nPrefira contêiner de posição fixa; movimento rápido pode incluir bordas do fundo.\nO elemento deve manter o tamanho; sumir, ficar oculto ou mudar de tamanho encerra com erro.\nSeletores atuam no documento principal, sem atravessar iframe/shadow DOM.\nListe IDs com tabs --json. Abas exigem CDP: veja tabs --help.
---screen usa índices de screens --json; padrão 0 no macOS.
-macOS: captura de tela exige permissão de Gravação de Tela para o terminal.")]
+Without --duration: start in the background and return an ID for stop.
+With --duration: wait until complete. Never opens a visual picker.
+--tab captures the visible tab content, without browser chrome or audio.
+--selector '#player' crops a unique element; its rectangle is recalculated every frame.\nPrefer a fixed-position container; fast movement may include background edges.\nThe element must keep its size; disappearing, becoming hidden, or resizing ends capture with an error.\nSelectors target the main document and do not cross iframe/shadow DOM boundaries.\nList IDs with tabs --json. Tabs require CDP: see tabs --help.
+--screen uses indices from screens --json; default: 0 on macOS.
+macOS: screen capture requires Screen Recording permission for the terminal.")]
 struct RecordArgs {
-    /// Diretório onde salvar (quando -o/--output não é dado).
-    /// Padrão: ~/Documents/Videos (criado se não existir)
+    /// Save directory (when -o/--output is not provided).
+    /// Default: ~/Documents/Videos (created if missing)
     #[arg(long)]
     dir: Option<PathBuf>,
-    /// Duração: segundos ou HH:MM:SS (ex.: 10, 1:30).
-    /// Com --duration, grava em foreground e sai; sem, grava em
-    /// background, devolve um id e termina com `aditor stop <id>`
+    /// Duration: seconds or HH:MM:SS (e.g. 10, 1:30).
+    /// With --duration, record in the foreground and exit; otherwise, record in the
+    /// background, return an ID, and finish with `aditor stop <id>`
     #[arg(long)]
     duration: Option<String>,
-    /// Frames por segundo (padrão 30)
+    /// Frames per second (default: 30)
     #[arg(long, default_value_t = 30)]
     fps: u32,
     #[command(flatten)]
     source: capture::SourceOpts,
-    /// Inclui áudio do microfone padrão junto com o vídeo
+    /// Include audio from the default microphone with the video
     #[arg(long, default_value_t = false)]
     audio: bool,
-    /// Dispositivo de áudio (índice ou nome do avfoundation/pulse/dshow).
-    /// Ex.: 1, "Microfone (MacBook Pro)". Implica --audio
+    /// Audio device (avfoundation/pulse/dshow index or name).
+    /// Example: 1, "MacBook Pro Microphone". Implies --audio
     #[arg(long)]
     audio_device: Option<String>,
     #[command(flatten)]
@@ -192,13 +192,13 @@ struct RecordArgs {
 
 #[derive(Args, Debug)]
 struct StopArgs {
-    /// Id da gravação (o que `aditor record` devolveu).
-    /// Sem id, para a única gravação ativa (erra se houver 0 ou 2+)
+    /// Recording ID (returned by `aditor record`).
+    /// Without an ID, stop the only active recording (error if there are 0 or 2+)
     id: Option<String>,
-    /// Para todas as gravações ativas
+    /// Stop all active recordings
     #[arg(long, default_value_t = false)]
     all: bool,
-    /// Imprime resumo JSON (p/ o agente) em vez de texto
+    /// Print a JSON summary (for agents) instead of plain text
     #[arg(long, default_value_t = false)]
     json: bool,
 }
@@ -211,45 +211,45 @@ struct DoctorArgs {
 
 #[derive(Args, Debug)]
 struct FetchArgs {
-    /// Diretório de destino (padrão: ./third_party)
+    /// Destination directory (default: ./third_party)
     #[arg(long)]
     dir: Option<PathBuf>,
 }
 
-/// Opções de saída compartilhadas.
+/// Shared output options.
 #[derive(Args, Debug, Clone)]
 struct OutOpts {
-    /// Arquivo de saída. Padrão: speed/cut/edit/convert usam
-    /// <nome>-<op>.mp4 ao lado do input; capturas usam o diretório indicado no help
+    /// Output file. Default: speed/cut/edit/convert use
+    /// <name>-<op>.mp4 next to the input; captures use the directory shown in help
     #[arg(short, long)]
     output: Option<PathBuf>,
-    /// Sobrescreve sem perguntar (sem isso, recusa se o arquivo existir)
+    /// Overwrite without prompting (otherwise, refuse if the file exists)
     #[arg(long, default_value_t = false)]
     yes: bool,
-    /// Mostra o plano/comando de captura ou edição, sem executar
+    /// Show the capture or editing plan/command without running it
     #[arg(long, default_value_t = false)]
     dry_run: bool,
-    /// Imprime resumo JSON (p/ o agente) em vez de texto
+    /// Print a JSON summary (for agents) instead of plain text
     #[arg(long, default_value_t = false)]
     json: bool,
 }
 
-/// Opções de codificação compartilhadas.
+/// Shared encoding options.
 #[derive(Args, Debug, Clone)]
 struct EncOpts {
-    /// Codec de vídeo: auto (HW no Mac, senão SW) | h264 | h264-sw | hevc | hevc-sw | copy
+    /// Video codec: auto (hardware on Mac, otherwise software) | h264 | h264-sw | hevc | hevc-sw | copy
     #[arg(long, default_value = "auto")]
     codec: String,
-    /// CRF para encoders por software (menor = melhor; padrão 20)
+    /// CRF for software encoders (lower = better quality; default: 20)
     #[arg(long)]
     crf: Option<u8>,
-    /// Bitrate de vídeo p/ encoder de hardware (padrão 12M)
+    /// Video bitrate for hardware encoders (default: 12M)
     #[arg(long, default_value = "12M")]
     video_bitrate: String,
-    /// Preset p/ encoder por software (padrão veryfast)
+    /// Software encoder preset (default: veryfast)
     #[arg(long, default_value = "veryfast")]
     preset: String,
-    /// Bitrate de áudio AAC (padrão 160k)
+    /// AAC audio bitrate (default: 160k)
     #[arg(long, default_value = "160k")]
     audio_bitrate: String,
 }
@@ -278,7 +278,7 @@ fn main() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// comandos
+// commands
 // ---------------------------------------------------------------------------
 
 fn cmd_info(a: InfoArgs) -> Result<()> {
@@ -367,23 +367,23 @@ fn cmd_record(a: RecordArgs) -> Result<()> {
     let duration = a.duration.as_deref().map(parse_ts).transpose()?;
     if let Some(d) = duration {
         if d <= 0.0 {
-            bail!("--duration deve ser maior que zero");
+            bail!("--duration must be greater than zero");
         }
     }
     if a.fps == 0 || a.fps > 120 {
-        bail!("--fps deve estar entre 1 e 120 (recebido {})", a.fps);
+        bail!("--fps must be between 1 and 120 (got {})", a.fps);
     }
     a.source.validate()?;
     let with_audio = a.audio || a.audio_device.is_some();
     if a.source.tab.is_some() && with_audio {
-        bail!("--tab não suporta áudio; remova --audio/--audio-device");
+        bail!("--tab does not support audio; remove --audio/--audio-device");
     }
 
     let ffmpeg = resolve_ffmpeg()?;
     let encoders = run_capture(&ffmpeg, &["-hide_banner", "-encoders"])?;
     let codec_label = a.enc.codec.to_lowercase();
     if codec_label == "copy" {
-        bail!("--codec copy não vale para record (precisa codificar a captura)");
+        bail!("--codec copy is not supported for record (capture requires encoding)");
     }
     let (video_codec_name, vopts) = pick_video_codec(&codec_label, &encoders, &a.enc)?;
 
@@ -420,7 +420,7 @@ fn cmd_record(a: RecordArgs) -> Result<()> {
         )?);
     }
 
-    // Duração limite (opção de saída; sem --duration grava até Ctrl+C).
+    // Duration limit (output option; without --duration, record until Ctrl+C).
     if let Some(d) = duration {
         args.push("-t".into());
         args.push(format!("{d:.3}"));
@@ -456,7 +456,7 @@ fn cmd_record(a: RecordArgs) -> Result<()> {
                 "fps": a.fps,
                 "duration": duration,
                 "background": background,
-                "stop": "aditor stop <id> (só p/ gravação em background)",
+                "stop": "aditor stop <id> (background recording only)",
                 "audio": with_audio,
                 "video_codec": video_codec_name,
                 "ffmpeg_cmd": cmd_str,
@@ -482,17 +482,20 @@ fn cmd_record(a: RecordArgs) -> Result<()> {
         );
     }
 
-    eprintln!("gravando: {cmd_str}");
+    eprintln!("recording: {cmd_str}");
     let status = Command::new(&ffmpeg)
         .args(&args)
         .stdin(Stdio::null())
         .status()
-        .with_context(|| format!("executar {}", ffmpeg.display()))?;
+        .with_context(|| format!("execute {}", ffmpeg.display()))?;
     if !status.success() {
-        bail!("ffmpeg falhou (status {status})");
+        bail!("ffmpeg failed (status {status})");
     }
     if !output.exists() {
-        bail!("ffmpeg saiu ok mas não achei {}", output.display());
+        bail!(
+            "ffmpeg exited successfully but the output was not found: {}",
+            output.display()
+        );
     }
 
     if a.out.json {
@@ -514,7 +517,7 @@ fn cmd_record(a: RecordArgs) -> Result<()> {
     Ok(())
 }
 
-/// Sonda duração (s) e tamanho (bytes) de um vídeo; (None, size) se o probe falhar.
+/// Probe video duration (seconds) and size (bytes); (None, size) if probing fails.
 fn probe_output(output: &Path) -> (Option<f64>, Option<u64>) {
     let size = std::fs::metadata(output).map(|m| m.len()).ok();
     let dur = resolve_ffprobe()
@@ -528,7 +531,7 @@ fn probe_output(output: &Path) -> (Option<f64>, Option<u64>) {
     (dur, size)
 }
 
-/// Diretório padrão de gravação: ~/Documents/Videos.
+/// Default recording directory: ~/Documents/Videos.
 fn default_record_dir() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -544,10 +547,10 @@ fn now_epoch() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// gravação em background: record (sem --duration) ↔ stop <id>
+// background recording: record (without --duration) ↔ stop <id>
 // ---------------------------------------------------------------------------
 
-/// Sessão de gravação em background (um arquivo por gravação ativa).
+/// Background recording session (one file per active recording).
 #[derive(Serialize, Deserialize)]
 struct RecSession {
     id: String,
@@ -563,14 +566,14 @@ struct RecSession {
     worker_config: Option<PathBuf>,
 }
 
-/// Diretório das sessões: $XDG_CACHE_HOME/aditor/rec ou ~/.cache/aditor/rec.
+/// Session directory: $XDG_CACHE_HOME/aditor/rec or ~/.cache/aditor/rec.
 fn rec_sessions_dir() -> Result<PathBuf> {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("aditor").join("rec");
-    std::fs::create_dir_all(&dir).with_context(|| format!("criar {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     Ok(dir)
 }
 
@@ -600,29 +603,29 @@ fn start_background_recording(
     let id = rec_id(&sessions);
     let log_path = sessions.join(format!("{id}.log"));
     let log = std::fs::File::create(&log_path)
-        .with_context(|| format!("criar {}", log_path.display()))?;
+        .with_context(|| format!("create {}", log_path.display()))?;
     let mut child = Command::new(ffmpeg)
         .args(args)
         .stdin(Stdio::null())
-        .stdout(log.try_clone().context("clonar log")?)
+        .stdout(log.try_clone().context("clone log handle")?)
         .stderr(log)
         .spawn()
-        .with_context(|| format!("executar {}", ffmpeg.display()))?;
+        .with_context(|| format!("execute {}", ffmpeg.display()))?;
     let pid = child.id();
-    // Fail-fast: se o ffmpeg morreu em <1s (dispositivo/permissão), mostra o log.
+    // Fail fast: if ffmpeg exits within 1s (device/permission error), show the log.
     std::thread::sleep(std::time::Duration::from_secs(1));
     if let Some(status) = child
         .try_wait()
-        .with_context(|| format!("aguardar {}", ffmpeg.display()))?
+        .with_context(|| format!("wait for {}", ffmpeg.display()))?
     {
         let tail = tail_file(&log_path, 15);
         let _ = std::fs::remove_file(&log_path);
         if output.exists() {
             let _ = std::fs::remove_file(output);
         }
-        bail!("ffmpeg falhou ao iniciar (status {status}). Log:\n{tail}");
+        bail!("ffmpeg failed to start (status {status}). Log:\n{tail}");
     }
-    std::mem::forget(child); // continua gravando após o aditor sair
+    std::mem::forget(child); // keep recording after aditor exits
     let sess = RecSession {
         id: id.clone(),
         pid,
@@ -655,9 +658,9 @@ fn start_background_recording(
             }))?
         );
     } else {
-        println!("gravando em background — id {id}");
-        println!("saída: {}", output.display());
-        println!("pare com: aditor stop {id}");
+        println!("recording in the background — id {id}");
+        println!("output: {}", output.display());
+        println!("stop with: aditor stop {id}");
     }
     Ok(())
 }
@@ -697,7 +700,7 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
-/// Pede p/ o ffmpeg finalizar (SIGINT) e espera; escala p/ TERM/KILL se preciso.
+/// Ask ffmpeg to finish (SIGINT) and wait; escalate to TERM/KILL if needed.
 fn terminate_pid(pid: u32) {
     #[cfg(unix)]
     {
@@ -755,7 +758,7 @@ fn terminate_pid(pid: u32) {
 fn load_sessions() -> Result<Vec<(PathBuf, RecSession)>> {
     let dir = rec_sessions_dir()?;
     let mut out = vec![];
-    let entries = std::fs::read_dir(&dir).with_context(|| format!("ler {}", dir.display()))?;
+    let entries = std::fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))?;
     for e in entries.flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("json") {
@@ -773,24 +776,24 @@ fn load_sessions() -> Result<Vec<(PathBuf, RecSession)>> {
 
 fn cmd_stop(a: StopArgs) -> Result<()> {
     if a.id.is_some() && a.all {
-        bail!("passe um id OU --all, não ambos");
+        bail!("pass an ID OR --all, not both");
     }
     let sessions = load_sessions()?;
     if sessions.is_empty() {
-        bail!("nenhuma gravação ativa (veja `aditor record`)");
+        bail!("no active recordings (see `aditor record`)");
     }
     let targets: Vec<(PathBuf, RecSession)> = if a.all {
         sessions
     } else if let Some(id) = &a.id {
         let hit: Vec<_> = sessions.into_iter().filter(|(_, s)| s.id == *id).collect();
         if hit.is_empty() {
-            bail!("gravação `{id}` não encontrada. Ativas: {}", active_ids()?);
+            bail!("recording `{id}` not found. Active: {}", active_ids()?);
         }
         hit
     } else {
         if sessions.len() > 1 {
             bail!(
-                "mais de uma gravação ativa — passe o id. Ativas: {}",
+                "more than one active recording — pass an ID. Active: {}",
                 active_ids()?
             );
         }
@@ -830,19 +833,22 @@ fn stop_one(path: &Path, sess: &RecSession) -> Result<serde_json::Value> {
             return Err(error);
         }
     } else if pid_alive(sess.pid) {
-        eprintln!("parando {} (pid {})…", sess.id, sess.pid);
+        eprintln!("stopping {} (pid {})…", sess.id, sess.pid);
         terminate_pid(sess.pid);
-        // dá um respiro p/ o moov ser finalizado no arquivo
+        // allow time for the moov atom to be finalized in the file
         std::thread::sleep(std::time::Duration::from_millis(500));
     } else {
-        eprintln!("{} já tinha terminado (pid {} morto)", sess.id, sess.pid);
+        eprintln!(
+            "{} had already finished (pid {} is no longer running)",
+            sess.id, sess.pid
+        );
     }
-    let _ = std::fs::remove_file(path); // sessão encerrada, viva ou não
+    let _ = std::fs::remove_file(path); // session closed, whether the process was alive or not
     let (dur, size) = probe_output(&output);
     if !output.exists() || size.unwrap_or(0) == 0 {
         let tail = tail_file(Path::new(&sess.log), 15);
         bail!(
-            "gravação {} parou mas não gerou vídeo em {}. Log:\n{tail}",
+            "recording {} stopped but did not produce a video at {}. Log:\n{tail}",
             sess.id,
             output.display()
         );
@@ -895,9 +901,9 @@ fn cmd_doctor(a: DoctorArgs) -> Result<()> {
 
 fn cmd_fetch(a: FetchArgs) -> Result<()> {
     let dir = a.dir.unwrap_or_else(|| PathBuf::from("third_party"));
-    std::fs::create_dir_all(&dir).with_context(|| format!("criar {}", dir.display()))?;
-    eprintln!("baixando build estática de ffmpeg/ffprobe…");
-    ffmpeg_sidecar::download::auto_download().context("falha no auto-download do ffmpeg")?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    eprintln!("downloading a static ffmpeg/ffprobe build…");
+    ffmpeg_sidecar::download::auto_download().context("ffmpeg auto-download failed")?;
     let src_dir = ffmpeg_sidecar::paths::sidecar_dir()?;
     let mut copied = vec![];
     for bin in ["ffmpeg", "ffprobe"] {
@@ -910,7 +916,7 @@ fn cmd_fetch(a: FetchArgs) -> Result<()> {
         if src.exists() {
             let dst = dir.join(&exe);
             std::fs::copy(&src, &dst)
-                .with_context(|| format!("copiar {} → {}", src.display(), dst.display()))?;
+                .with_context(|| format!("copy {} → {}", src.display(), dst.display()))?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -921,15 +927,15 @@ fn cmd_fetch(a: FetchArgs) -> Result<()> {
     }
     if copied.is_empty() {
         bail!(
-            "download concluiu mas não achei os binários em {}",
+            "download completed but no binaries were found in {}",
             src_dir.display()
         );
     }
-    println!("pronto em {}:", dir.display());
+    println!("ready in {}:", dir.display());
     for p in &copied {
         println!("  {}", p.display());
     }
-    println!("Para embutir no binário, rebuild com:");
+    println!("To embed in the binary, rebuild with:");
     println!(
         "  ADITOR_FFMPEG_BIN=$PWD/{}/ffmpeg ADITOR_FFPROBE_BIN=$PWD/{}/ffprobe cargo build --release --features embed-ffmpeg",
         dir.display(),
@@ -939,7 +945,7 @@ fn cmd_fetch(a: FetchArgs) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// job (pipeline único de ffmpeg)
+// job (single ffmpeg pipeline)
 // ---------------------------------------------------------------------------
 
 struct Job {
@@ -967,7 +973,7 @@ struct Summary {
 
 fn run_job(job: Job) -> Result<()> {
     if !job.input.exists() {
-        bail!("input não existe: {}", job.input.display());
+        bail!("input does not exist: {}", job.input.display());
     }
     let ffmpeg = resolve_ffmpeg()?;
     let ffprobe = resolve_ffprobe()?;
@@ -983,15 +989,15 @@ fn run_job(job: Job) -> Result<()> {
     };
     if output.exists() && !job.out.yes && !job.out.dry_run {
         bail!(
-            "saída já existe (use --yes para sobrescrever): {}",
+            "output already exists (use --yes to overwrite): {}",
             output.display()
         );
     }
 
     let codec_label = job.enc.codec.to_lowercase();
     let stream_copy = codec_label == "copy" && (job.speed - 1.0).abs() < f64::EPSILON && !job.mute;
-    // copy só vale sem filtros; com corte por keyframe pode ser impreciso —
-    // aqui mantemos re-encode como padrão seguro, copy só se pedido.
+    // copy only works without filters; keyframe-based trimming can be imprecise —
+    // keep re-encoding as the safe default; use copy only when requested.
     let encoders = run_capture(&ffmpeg, &["-hide_banner", "-encoders"])?;
 
     let mut args: Vec<String> = vec!["-hide_banner".into()];
@@ -1000,10 +1006,10 @@ fn run_job(job: Job) -> Result<()> {
     } else {
         args.push("-n".into());
     }
-    // NOTA: -ss/-t vão ANTES do -i (opções de input). Como output options,
-    // o -t quebra os filtros de áudio (atempo vira no-op silencioso no
-    // ffmpeg 8) — verificado empiricamente. Como input, o corte é rápido
-    // (seek) e os filtros aplicam sobre o trecho certo.
+    // NOTE: -ss/-t go BEFORE -i (input options). As output options,
+    // -t breaks audio filters (atempo silently becomes a no-op in
+    // ffmpeg 8) — verified empirically. As input options, trimming is fast
+    // (seek) and filters apply to the correct segment.
     if let Some(from) = job.from {
         args.push("-ss".into());
         args.push(format!("{from:.3}"));
@@ -1021,7 +1027,7 @@ fn run_job(job: Job) -> Result<()> {
         args.push("copy".into());
         video_codec_name = "copy".into();
     } else {
-        // vídeo (pick_video_codec já inclui o -c:v do encoder)
+        // video (pick_video_codec already includes the encoder's -c:v)
         let (vcodec, vopts) = pick_video_codec(&codec_label, &encoders, &job.enc)?;
         video_codec_name = vcodec;
         args.extend(vopts);
@@ -1030,7 +1036,7 @@ fn run_job(job: Job) -> Result<()> {
         args.push("-movflags".into());
         args.push("+faststart".into());
 
-        // velocidade de vídeo
+        // video speed
         let mut vf: Vec<String> = vec![];
         if (job.speed - 1.0).abs() > f64::EPSILON {
             vf.push(format!("setpts=PTS/{:.6}", job.speed));
@@ -1040,7 +1046,7 @@ fn run_job(job: Job) -> Result<()> {
             args.push(vf.join(","));
         }
 
-        // áudio
+        // audio
         if job.mute || !has_audio {
             args.push("-an".into());
         } else {
@@ -1076,14 +1082,14 @@ fn run_job(job: Job) -> Result<()> {
         return Ok(());
     }
 
-    eprintln!("rodando: {cmd_str}");
+    eprintln!("running: {cmd_str}");
     let status = Command::new(&ffmpeg)
         .args(&args)
         .stdin(Stdio::null())
         .status()
-        .with_context(|| format!("executar {}", ffmpeg.display()))?;
+        .with_context(|| format!("execute {}", ffmpeg.display()))?;
     if !status.success() {
-        bail!("ffmpeg falhou (status {status})");
+        bail!("ffmpeg failed (status {status})");
     }
 
     let summary = Summary {
@@ -1105,39 +1111,39 @@ fn run_job(job: Job) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// ffmpeg/ffprobe resolution — binário único, self-contained
+// ffmpeg/ffprobe resolution — single, self-contained binary
 // ---------------------------------------------------------------------------
 
 fn resolve_ffmpeg() -> Result<PathBuf> {
-    // 1. override explícito
+    // 1. explicit override
     if let Ok(p) = std::env::var("ADITOR_FFMPEG") {
         let p = PathBuf::from(p);
         if p.exists() {
             return Ok(p);
         }
-        bail!("ADITOR_FFMPEG={} não existe", p.display());
+        bail!("ADITOR_FFMPEG={} does not exist", p.display());
     }
-    // 2. binário embutido (feature embed-ffmpeg) → extrai p/ cache
+    // 2. embedded binary (embed-ffmpeg feature) → extract to cache
     #[cfg(feature = "embed-ffmpeg")]
     {
         if let Ok(p) = ensure_embedded("ffmpeg", EMBEDDED_FFMPEG) {
             return Ok(p);
         }
     }
-    // 3. sidecar ao lado do executável
+    // 3. sidecar next to the executable
     if let Ok(side) = ffmpeg_sidecar::paths::sidecar_path() {
         if side.exists() {
             return Ok(side);
         }
     }
-    // 4. PATH do sistema
+    // 4. system PATH
     if let Ok(p) = which::which("ffmpeg") {
         return Ok(p);
     }
-    // 5. auto-download (self-bootstrap, precisa de rede 1x)
-    eprintln!("ffmpeg não encontrado — baixando build estática…");
+    // 5. auto-download (self-bootstrapping, requires network access once)
+    eprintln!("ffmpeg not found — downloading a static build…");
     ffmpeg_sidecar::download::auto_download().context(
-        "ffmpeg não encontrado e o download falhou. Instale via `brew install ffmpeg` ou defina ADITOR_FFMPEG=/caminho/ffmpeg",
+        "ffmpeg not found and download failed. Install with `brew install ffmpeg` or set ADITOR_FFMPEG=/path/to/ffmpeg",
     )?;
     if let Ok(side) = ffmpeg_sidecar::paths::sidecar_path() {
         if side.exists() {
@@ -1147,7 +1153,7 @@ fn resolve_ffmpeg() -> Result<PathBuf> {
     if let Ok(p) = which::which("ffmpeg") {
         return Ok(p);
     }
-    bail!("ffmpeg indisponível mesmo após download");
+    bail!("ffmpeg is still unavailable after download");
 }
 
 fn resolve_ffprobe() -> Result<PathBuf> {
@@ -1156,7 +1162,7 @@ fn resolve_ffprobe() -> Result<PathBuf> {
         if p.exists() {
             return Ok(p);
         }
-        bail!("ADITOR_FFPROBE={} não existe", p.display());
+        bail!("ADITOR_FFPROBE={} does not exist", p.display());
     }
     #[cfg(feature = "embed-ffmpeg")]
     {
@@ -1164,9 +1170,9 @@ fn resolve_ffprobe() -> Result<PathBuf> {
             return Ok(p);
         }
     }
-    // ffprobe costuma acompanhar o ffmpeg: procura vizinhos + PATH
+    // ffprobe usually ships with ffmpeg: check neighboring binaries and PATH
     if let Ok(p) = which::which("ffprobe") {
-        // prefere o vizinho do ffmpeg resolvido (versões casadas)
+        // prefer the neighbor of the resolved ffmpeg (matching versions)
         if let Ok(ff) = resolve_ffmpeg() {
             if let Some(dir) = ff.parent() {
                 let sib = dir.join(if cfg!(windows) {
@@ -1181,7 +1187,7 @@ fn resolve_ffprobe() -> Result<PathBuf> {
         }
         return Ok(p);
     }
-    // tenta garantir via download e re-tenta
+    // try downloading, then check again
     let _ = ffmpeg_sidecar::download::auto_download();
     if let Ok(ff) = resolve_ffmpeg() {
         if let Some(dir) = ff.parent() {
@@ -1198,10 +1204,10 @@ fn resolve_ffprobe() -> Result<PathBuf> {
     if let Ok(p) = which::which("ffprobe") {
         return Ok(p);
     }
-    bail!("ffprobe não encontrado (instale ffmpeg completo via `brew install ffmpeg`)");
+    bail!("ffprobe not found (install the full ffmpeg package with `brew install ffmpeg`)");
 }
 
-/// Extrai binário embutido para o cache do usuário (uma vez) e devolve o path.
+/// Extract an embedded binary to the user cache (once) and return its path.
 #[cfg(feature = "embed-ffmpeg")]
 fn ensure_embedded(name: &str, bytes: &[u8]) -> Result<PathBuf> {
     let dir = std::env::var_os("XDG_CACHE_HOME")
@@ -1210,7 +1216,7 @@ fn ensure_embedded(name: &str, bytes: &[u8]) -> Result<PathBuf> {
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("aditor")
         .join("bin");
-    std::fs::create_dir_all(&dir).with_context(|| format!("criar {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let exe = if cfg!(windows) {
         format!("{name}.exe")
     } else {
@@ -1244,7 +1250,7 @@ fn run_capture(bin: &Path, args: &[&str]) -> Result<String> {
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .with_context(|| format!("executar {}", bin.display()))?;
+        .with_context(|| format!("execute {}", bin.display()))?;
     let mut s = String::from_utf8_lossy(&out.stdout).to_string();
     s.push_str(&String::from_utf8_lossy(&out.stderr));
     Ok(s)
@@ -1263,11 +1269,11 @@ fn probe(ffprobe: &Path, input: &Path) -> Result<serde_json::Value> {
         ])
         .stdin(Stdio::null())
         .output()
-        .with_context(|| format!("executar {}", ffprobe.display()))?;
+        .with_context(|| format!("execute {}", ffprobe.display()))?;
     if !out.status.success() {
-        bail!("ffprobe falhou em {}", input.display());
+        bail!("ffprobe failed for {}", input.display());
     }
-    serde_json::from_slice(&out.stdout).context("parse do JSON do ffprobe")
+    serde_json::from_slice(&out.stdout).context("parse ffprobe JSON")
 }
 
 fn print_human_info(input: &Path, v: &serde_json::Value) {
@@ -1275,7 +1281,7 @@ fn print_human_info(input: &Path, v: &serde_json::Value) {
     let dur = fmt["duration"].as_str().unwrap_or("?");
     let size = fmt["size"].as_str().unwrap_or("?");
     println!("{}:", input.display());
-    println!("  duração: {dur}s  tamanho: {size} bytes");
+    println!("  duration: {dur}s  size: {size} bytes");
     for s in v["streams"].as_array().cloned().unwrap_or_default() {
         let (i, ct, codec, extra) = (
             s["index"].to_string(),
@@ -1300,31 +1306,31 @@ fn print_human_info(input: &Path, v: &serde_json::Value) {
     }
 }
 
-/// Aceita segundos ("90", "90.5") ou [HH:]MM:SS[.mmm].
+/// Accept seconds ("90", "90.5") or [HH:]MM:SS[.mmm].
 fn parse_ts(s: &str) -> Result<f64> {
     let s = s.trim();
     if let Ok(f) = s.parse::<f64>() {
         if !f.is_finite() || f < 0.0 {
-            bail!("timestamp inválido: {s}");
+            bail!("invalid timestamp: {s}");
         }
         return Ok(f);
     }
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() > 3 || parts.is_empty() {
-        bail!("timestamp inválido: {s} (use segundos ou HH:MM:SS.mmm)");
+        bail!("invalid timestamp: {s} (use seconds or HH:MM:SS.mmm)");
     }
     let mut total = 0.0;
     for p in parts {
         let f: f64 = p
             .parse()
-            .with_context(|| format!("timestamp inválido: {s}"))?;
+            .with_context(|| format!("invalid timestamp: {s}"))?;
         if !f.is_finite() || f < 0.0 {
-            bail!("timestamp inválido: {s}");
+            bail!("invalid timestamp: {s}");
         }
         total = total * 60.0 + f;
     }
     if !total.is_finite() || total < 0.0 {
-        bail!("timestamp inválido: {s}");
+        bail!("invalid timestamp: {s}");
     }
     Ok(total)
 }
@@ -1335,7 +1341,7 @@ fn cut_window(
     duration: Option<&str>,
 ) -> Result<(Option<f64>, Option<f64>)> {
     if to.is_some() && duration.is_some() {
-        bail!("use --to OU --duration, não ambos");
+        bail!("use --to OR --duration, not both");
     }
     let from = from.map(parse_ts).transpose()?;
     let duration = match (to, duration) {
@@ -1343,7 +1349,7 @@ fn cut_window(
             let to = parse_ts(t)?;
             let f = from.unwrap_or(0.0);
             if to <= f {
-                bail!("--to ({to}s) deve ser maior que --from ({f}s)");
+                bail!("--to ({to}s) must be greater than --from ({f}s)");
             }
             Some(to - f)
         }
@@ -1352,19 +1358,19 @@ fn cut_window(
         _ => unreachable!(),
     };
     if from.is_none() && duration.is_none() {
-        bail!("corte precisa de --from, --to ou --duration");
+        bail!("cut requires --from, --to, or --duration");
     }
     Ok((from, duration))
 }
 
 fn check_factor(f: f64) -> Result<()> {
     if !(0.25..=16.0).contains(&f) {
-        bail!("fator deve estar entre 0.25 e 16 (recebido {f})");
+        bail!("factor must be between 0.25 and 16 (got {f})");
     }
     Ok(())
 }
 
-/// atempo só aceita 0.5–2.0 → encadeia para fatores arbitrários.
+/// atempo only accepts 0.5–2.0 → chain filters for arbitrary factors.
 fn atempo_chain(mut f: f64) -> String {
     let mut parts = vec![];
     while f > 2.0 {
@@ -1383,7 +1389,7 @@ fn atempo_chain(mut f: f64) -> String {
         .join(",")
 }
 
-/// Escolhe encoder real + flags. Retorna (nome-do-codec, args extras).
+/// Select the actual encoder and flags. Return (codec name, extra args).
 fn pick_video_codec(codec: &str, encoders: &str, enc: &EncOpts) -> Result<(String, Vec<String>)> {
     let vt_h264 = encoders.contains("h264_videotoolbox");
     let vt_hevc = encoders.contains("hevc_videotoolbox");
@@ -1412,7 +1418,7 @@ fn pick_video_codec(codec: &str, encoders: &str, enc: &EncOpts) -> Result<(Strin
                     ],
                 ))
             } else {
-                bail!("nenhum encoder h264 disponível (nem videotoolbox nem libx264)");
+                bail!("no h264 encoder available (neither videotoolbox nor libx264)");
             }
         }
         "h264-sw" => Ok((
@@ -1463,7 +1469,7 @@ fn pick_video_codec(codec: &str, encoders: &str, enc: &EncOpts) -> Result<(Strin
             ],
         )),
         "copy" => Ok(("copy".into(), vec![])),
-        other => bail!("codec desconhecido: {other} (auto|h264|h264-sw|hevc|hevc-sw|copy)"),
+        other => bail!("unknown codec: {other} (auto|h264|h264-sw|hevc|hevc-sw|copy)"),
     }
 }
 

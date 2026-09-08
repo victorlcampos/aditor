@@ -2,19 +2,19 @@ use super::*;
 
 #[derive(Args, Debug, Serialize)]
 pub struct SourceOpts {
-    /// Índice do monitor no macOS (padrão 0). Liste com screens --json
+    /// Monitor index on macOS (default: 0). List with screens --json
     #[arg(long, conflicts_with_all = ["tab", "video_device"])]
     pub screen: Option<u32>,
-    /// ID exato da aba retornado por tabs --json; captura somente o viewport
+    /// Exact tab ID returned by tabs --json; captures only the viewport
     #[arg(long, conflicts_with = "video_device")]
     pub tab: Option<String>,
-    /// CSS selector único do elemento a capturar (ex.: '#player'); exige --tab
+    /// Unique CSS selector of the element to capture (e.g. '#player'); requires --tab
     #[arg(long, requires = "tab")]
     pub selector: Option<String>,
-    /// Porta CDP local do Chrome/Chromium/Edge (use com --tab)
+    /// Local Chrome/Chromium/Edge CDP port (use with --tab)
     #[arg(long, default_value_t = 9222, requires = "tab", value_parser = clap::value_parser!(u16).range(1..))]
     pub cdp_port: u16,
-    /// Entrada nativa: nome/índice AVFoundation, display X11 ou desktop/title=... no Windows
+    /// Native input: AVFoundation name/index, X11 display, or desktop/title=... on Windows
     #[arg(long)]
     pub video_device: Option<String>,
 }
@@ -26,13 +26,13 @@ impl SourceOpts {
             .as_deref()
             .is_some_and(|s| s.trim().is_empty())
         {
-            bail!("--selector não pode ser vazio");
+            bail!("--selector cannot be empty");
         }
         if self.tab.as_deref() == Some("") {
-            bail!("--tab exige um ID; liste com aditor tabs --json");
+            bail!("--tab requires an ID; list tabs with aditor tabs --json");
         }
         if !cfg!(target_os = "macos") && self.screen.is_some() {
-            bail!("--screen disponível no macOS; nesta plataforma use --video-device ou --tab");
+            bail!("--screen is available on macOS; on this platform use --video-device or --tab");
         }
         Ok(())
     }
@@ -40,12 +40,12 @@ impl SourceOpts {
 
 #[derive(Args, Debug)]
 #[command(
-    after_help = "EXEMPLOS:\n  aditor screenshot --tab <ID> -o aba.png --json\n  aditor print --screen 1 --json\n\nSalva um único PNG; padrão ~/Documents/Pictures/aditor-<epoch>.png.\n--tab captura o viewport da aba, sem barras do navegador. Exige CDP (tabs --help).\nSem --tab: captura nativa, monitor 0 no macOS. Liste com screens --json.\n--selector '#player' recorta um elemento único no documento principal, inclusive fora do viewport.\nErro se ausente, ambíguo ou oculto. Não atravessa iframe/shadow DOM.\nNão há seletor visual nem gravação em background."
+    after_help = "EXAMPLES:\n  aditor screenshot --tab <ID> -o tab.png --json\n  aditor print --screen 1 --json\n\nSave a single PNG; default: ~/Documents/Pictures/aditor-<epoch>.png.\n--tab captures the tab viewport, without browser chrome. Requires CDP (tabs --help).\nWithout --tab: native capture, monitor 0 on macOS. List with screens --json.\n--selector '#player' crops a unique element in the main document, even outside the viewport.\nError if missing, ambiguous, or hidden. Does not cross iframe/shadow DOM boundaries.\nNo visual picker or background recording."
 )]
 pub struct ScreenshotArgs {
     #[command(flatten)]
     pub source: SourceOpts,
-    /// Diretório de saída (padrão ~/Documents/Pictures)
+    /// Output directory (default: ~/Documents/Pictures)
     #[arg(long)]
     pub dir: Option<PathBuf>,
     #[command(flatten)]
@@ -54,7 +54,7 @@ pub struct ScreenshotArgs {
 
 #[derive(Args, Debug)]
 pub struct ScreensArgs {
-    /// Lista JSON com screen (índice) e name (nome de captura)
+    /// JSON list with screen (index) and name (capture name)
     #[arg(long)]
     pub json: bool,
 }
@@ -80,18 +80,18 @@ pub fn output_path(out: &OutOpts, dir: Option<&Path>, extension: &str) -> Result
         }
     };
     if extension == "png" && output.extension().and_then(|s| s.to_str()) != Some("png") {
-        bail!("screenshot produz PNG; use um arquivo com extensão .png");
+        bail!("screenshot produces PNG; use a file with the .png extension");
     }
     if output.exists() && !out.yes {
         bail!(
-            "saída já existe (use --yes para sobrescrever): {}",
+            "output already exists (use --yes to overwrite): {}",
             output.display()
         );
     }
     if !out.dry_run {
         if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)
-                .with_context(|| format!("criar {}", parent.display()))?;
+                .with_context(|| format!("create {}", parent.display()))?;
         }
     }
     Ok(if output.is_absolute() {
@@ -159,7 +159,7 @@ pub fn input_args(
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    bail!("captura nativa não suportada nesta plataforma; use --tab");
+    bail!("native capture is not supported on this platform; use --tab");
     Ok(args)
 }
 
@@ -189,7 +189,7 @@ fn parse_screens(raw: &str) -> Vec<Screen> {
 
 pub fn screens(a: ScreensArgs) -> Result<()> {
     if !cfg!(target_os = "macos") {
-        bail!("screens disponível no macOS. Use --video-device para captura nativa ou tabs --json para abas");
+        bail!("screens is available on macOS. Use --video-device for native capture or tabs --json for tabs");
     }
     let ffmpeg = resolve_ffmpeg()?;
     let raw = run_capture(
@@ -206,7 +206,7 @@ pub fn screens(a: ScreensArgs) -> Result<()> {
     )?;
     let screens = parse_screens(&raw);
     if screens.is_empty() {
-        bail!("nenhum monitor encontrado pelo AVFoundation; verifique a permissão de Gravação de Tela.\n{raw}");
+        bail!("AVFoundation found no monitors; check Screen Recording permission.\n{raw}");
     }
     if a.json {
         println!("{}", serde_json::to_string_pretty(&screens)?);
@@ -255,10 +255,10 @@ pub fn screenshot(a: ScreenshotArgs) -> Result<()> {
             .stdin(Stdio::null())
             .status()?;
         if !status.success() {
-            bail!("ffmpeg falhou ao tirar print (status {status})");
+            bail!("ffmpeg failed to take a screenshot (status {status})");
         }
         if std::fs::metadata(&output)?.len() == 0 {
-            bail!("print vazio: {}", output.display());
+            bail!("empty screenshot: {}", output.display());
         }
     }
     if a.out.json {

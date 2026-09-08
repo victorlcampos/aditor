@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Smoke test real, sem dependências Python: --browser CAMINHO [--aditor CAMINHO].
-Usa Chrome headless com perfil temporário; não acessa o browser/perfil do usuário.
+"""End-to-end smoke test with no Python dependencies: --browser PATH [--aditor PATH].
+Uses headless Chrome with a temporary profile; does not access the user's browser/profile.
 """
 import argparse
 import json
@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='aditor-cli-test-') as directory:
                     if ready:
                         return target
                     time.sleep(.05)
-                raise RuntimeError('página de teste não terminou de carregar')
+                raise RuntimeError('test page did not finish loading')
 
             red = page('Aditor red target', 'red')
             page('Aditor blue foreground', 'blue')
@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix='aditor-cli-test-') as directory:
             png = root / 'tab.png'
             shot = run('screenshot', '--tab', red, '--cdp-port', port, '-o', str(png), '--json')
             assert shot['format'] == 'png' and png.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
-            # Confirma que o frame é da aba vermelha, mesmo com outra aba aberta depois.
+            # Verify that the frame is from the red tab, even with another tab opened afterward.
             pixel = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(png),
                 '-vf', 'scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'])
             assert pixel[0] > 240 and pixel[1] < 15 and pixel[2] < 15, pixel
@@ -100,7 +100,7 @@ with tempfile.TemporaryDirectory(prefix='aditor-cli-test-') as directory:
             plan = run('screenshot', '--tab', 'offline-id', '--cdp-port', '1',
                 '-o', str(root / 'not-created' / 'dry.png'), '--dry-run', '--json')
             assert plan['dry_run'] and not (root / 'not-created').exists()
-            # Recorte fora do viewport, com conteúdo animado dentro de um contêiner fixo.
+            # Crop outside the viewport, with animated content inside a fixed container.
             element = page('Element capture', 'blue', """<style>
                 #target {position:absolute;top:1200px;left:20px;width:200px;height:100px;background:lime;overflow:hidden} #target span {display:block;width:10px;height:10px;background:#00f000;animation:move .4s linear infinite alternate}
                 @keyframes move {to {transform:translateX(180px)}}
@@ -148,10 +148,10 @@ with tempfile.TemporaryDirectory(prefix='aditor-cli-test-') as directory:
                 <script>setTimeout(()=>document.getElementById('resize').style.width='220px',1800)</script>""")
             error = run('record', '--tab', resized, '--cdp-port', port, '--selector', '#resize', '--duration', '3',
                 '--fps', '5', '--codec', 'h264-sw', '-o', str(root / 'resized.mp4'), '--json', ok=False)
-            assert 'mudou de tamanho' in error.stderr, error.stderr
+            assert 'changed size' in error.stderr, error.stderr
             assert_element(root / 'resized.mp4', video=True)
 
-            # Fechar a aba gera erro e stop limpa a sessão encerrada, sem declarar sucesso.
+            # Closing the tab produces an error; stop cleans up the ended session without reporting success.
             broken = run('record', '--tab', red, '--cdp-port', port, '--fps', '10',
                 '--codec', 'h264-sw', '-o', str(root / 'closed.mp4'), '--json')
             active.append(broken['id'])
@@ -161,11 +161,11 @@ with tempfile.TemporaryDirectory(prefix='aditor-cli-test-') as directory:
             deadline = time.monotonic() + 20
             while not done.exists() and time.monotonic() < deadline:
                 time.sleep(.1)
-            assert done.exists(), 'worker não detectou a aba fechada'
+            assert done.exists(), 'worker did not detect the closed tab'
             run('stop', broken['id'], '--json', ok=False)
             active.remove(broken['id'])
             assert not list((root / 'cache' / 'aditor' / 'rec').glob('*.json'))
-            print('PASS: listagem, aba isolada, PNG, sobrescrita, MP4 com duração, background/stop, selector PNG/vídeo, erros e dry-run')
+            print('PASS: tab listing, isolated tab, PNG, overwrite, timed MP4, background/stop, selector PNG/video, errors, and dry-run')
         finally:
             for session in active:
                 subprocess.run([aditor, 'stop', session, '--json'], env=env,

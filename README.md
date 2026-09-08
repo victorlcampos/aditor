@@ -2,54 +2,54 @@
   <img src="assets/aditor-logo.png" alt="Aditor — Agentic Editor" width="900">
 </p>
 
-<h1 align="center">Da ação do seu agente ao vídeo pronto.</h1>
+<h1 align="center">From agent action to finished video.</h1>
 
 <p align="center">
-  <strong>Capture abas. Grave demonstrações. Corte, acelere e entregue.</strong><br>
-  Uma CLI em Rust que coloca captura de tela e edição de vídeo no fluxo da sua automação.
+  <strong>Capture tabs. Record demos. Cut, speed up, and ship.</strong><br>
+  A Rust CLI that brings screen capture and video editing into your automation workflow.
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-orange" alt="Licença MIT"></a>
-  <img src="https://img.shields.io/badge/feito_em-Rust-orange" alt="Feito em Rust">
-  <img src="https://img.shields.io/badge/interface-CLI_%2B_JSON-222222" alt="CLI e JSON">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/built_with-Rust-orange" alt="Built with Rust">
+  <img src="https://img.shields.io/badge/interface-CLI_%2B_JSON-222222" alt="CLI and JSON">
 </p>
 
 <p align="center">
-  <a href="#comece-aqui">Comece aqui</a> ·
-  <a href="#abas-do-navegador">Capture uma aba</a> ·
-  <a href="#edição">Edite vídeos</a> ·
-  <a href="#contrato-para-agentes">Integre ao seu agente</a>
+  <a href="#get-started">Get started</a> ·
+  <a href="#browser-tabs">Capture a tab</a> ·
+  <a href="#video-editing">Edit videos</a> ·
+  <a href="#agent-interface">Integrate with your agent</a>
 </p>
 
-## Seu agente já executa. Agora ele também mostra.
+## Your agent gets things done. Now it can show its work.
 
-Uma tarefa concluída fica muito mais fácil de entender quando vem acompanhada de um print, uma demonstração ou um trecho de vídeo. O **Aditor** transforma comandos de terminal nesses arquivos: do registro de uma aba específica ao corte final de uma gravação.
+A completed task is easier to understand with a screenshot, a demo, or a video clip. **Aditor** turns terminal commands into those deliverables: from capturing a specific browser tab to trimming the final recording.
 
-Feito para agentes que executam comandos, scripts e desenvolvedores que querem **automatizar a captura e a edição** com IDs explícitos, saída JSON e controle pelo terminal.
+Built for agents that run commands, scripts, and developers who want to **automate capture and editing** with explicit IDs, JSON output, and terminal control.
 
-| O que você quer entregar | Como o Aditor ajuda |
+| What you want to deliver | How Aditor helps |
 | --- | --- |
-| Uma demo do seu produto | Grave só a aba escolhida, sem as barras do navegador. |
-| Evidência visual de uma tarefa | Salve um PNG de uma aba, monitor ou elemento CSS. |
-| Um vídeo direto ao ponto | Corte, ajuste a velocidade e remova áudio em um único comando. |
-| Captura durante uma automação | Inicie em background e finalize pelo ID da sessão. |
-| Uma integração previsível | Use `--json`, `--dry-run` e códigos de saída para controlar o fluxo. |
+| A product demo | Record just the selected tab, without browser chrome. |
+| Visual evidence of a task | Save a PNG of a tab, monitor, or CSS-selected element. |
+| A video that gets to the point | Trim, adjust speed, and remove audio in one command. |
+| Capture during an automation | Start in the background and stop by session ID. |
+| A predictable integration | Use `--json`, `--dry-run`, and exit codes to control the workflow. |
 
 ```sh
-# Com o navegador configurado para CDP (instruções abaixo):
+# With the browser configured for CDP (instructions below):
 aditor tabs --json
 
-# Substitua ABC123 pelo ID retornado.
+# Replace ABC123 with the returned tab ID.
 aditor record --tab ABC123 --duration 15 -o demo.mp4 --json
 
-# Transforme a captura em uma demo mais curta.
+# Turn the capture into a shorter demo.
 aditor edit demo.mp4 --from 2 --duration 10 --speed 2 --mute -o demo-final.mp4 --json
 ```
 
-## Comece aqui
+## Get started
 
-Requer Rust e Cargo para compilar. Instale a partir do código:
+Requires Rust and Cargo to compile. Install from source:
 
 ```sh
 git clone https://github.com/victorlcampos/aditor.git
@@ -58,67 +58,67 @@ cargo install --path . --locked
 aditor --help
 ```
 
-Ou compile sem instalar:
+Or build without installing:
 
 ```sh
 cargo build --release --locked
 ./target/release/aditor --help
 ```
 
-O projeto está na versão **0.1.0**. Captura de abas usa Chrome, Chromium ou Edge com CDP habilitado; os requisitos de captura de tela variam por sistema, conforme abaixo.
+The project is at version **0.1.0**. Tab capture uses Chrome, Chromium, or Edge with CDP enabled; screen capture requirements vary by operating system, as described below.
 
-O FFmpeg é resolvido automaticamente (embutido, sidecar, PATH ou download). `ADITOR_FFMPEG` e `ADITOR_FFPROBE` permitem indicar os binários. Prints de abas e a listagem de abas usam CDP diretamente, sem FFmpeg.
+FFmpeg is resolved automatically (embedded, sidecar, PATH, or download). Set `ADITOR_FFMPEG` and `ADITOR_FFPROBE` to use specific binaries. Tab screenshots and tab listing use CDP directly, without FFmpeg.
 
-## Abas do navegador
+## Browser tabs
 
-Inicie Chrome, Chromium ou Edge com CDP e um perfil separado. No macOS:
+Start Chrome, Chromium, or Edge with CDP and a separate profile. On macOS:
 
 ```sh
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 --user-data-dir=/tmp/aditor-chrome
 ```
 
-Abra a página nesse navegador. O Chrome exige um diretório diferente do perfil padrão para habilitar depuração remota; veja a [documentação do Chrome](https://developer.chrome.com/blog/remote-debugging-port). `aditor tabs --help` também mostra a configuração em Linux e Windows.
+Open your page in that browser. Chrome requires a directory other than the default profile to enable remote debugging; see the [Chrome documentation](https://developer.chrome.com/blog/remote-debugging-port). `aditor tabs --help` also includes setup instructions for Linux and Windows.
 
 ```sh
 aditor tabs --json
-# [{"id":"ABC123", "title":"Minha página", "url":"https://..."}]
+# [{"id":"ABC123", "title":"My page", "url":"https://..."}]
 
-aditor screenshot --tab ABC123 -o aba.png --json
-aditor record --tab ABC123 --duration 10 -o aba.mp4 --json
+aditor screenshot --tab ABC123 -o tab.png --json
+aditor record --tab ABC123 --duration 10 -o tab.mp4 --json
 
-# Sem duração: devolve um ID e continua em background.
-aditor record --tab ABC123 -o demonstracao.mp4 --json
+# Without a duration: return an ID and keep recording in the background.
+aditor record --tab ABC123 -o demo.mp4 --json
 aditor stop rec-... --json
 ```
 
-Use o ID exato retornado por `tabs`. Para outra porta, passe `--cdp-port 9333` em `tabs`, `record --tab` e `screenshot --tab`. A conexão é com `127.0.0.1`; não há seleção por título ambíguo nem mudança de foco.
+Use the exact ID returned by `tabs`. For a different port, pass `--cdp-port 9333` to `tabs`, `record --tab`, and `screenshot --tab`. The connection uses `127.0.0.1`; there is no ambiguous title matching or focus switching.
 
-A captura usa [Page.captureScreenshot do CDP](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-captureScreenshot): somente a área visível da página, sem barras do navegador ou outras abas. Funciona com outra aba em primeiro plano. Não captura a página inteira rolável e não inclui áudio; `--tab --audio` é rejeitado. Safari e Firefox não são suportados por este backend. Se o navegador renderizar mais lentamente que `--fps`, frames são repetidos para preservar a duração do vídeo.
+Capture uses CDP's [Page.captureScreenshot](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-captureScreenshot): only the visible page area, without browser chrome or other tabs. It works with another tab in the foreground. It does not capture the entire scrollable page or include audio; `--tab --audio` is rejected. Safari and Firefox are not supported by this backend. If the browser renders more slowly than `--fps`, frames are repeated to preserve video duration.
 
-## Capturar um elemento por CSS selector
+## Capture an element by CSS selector
 
-Use `--selector` junto com o ID da aba:
+Use `--selector` together with a tab ID:
 
 ```sh
 aditor screenshot --tab ABC123 --selector '#player' -o player.png --json
-aditor print --tab ABC123 --selector '[data-testid="chart"]' -o grafico.png --json
+aditor print --tab ABC123 --selector '[data-testid="chart"]' -o chart.png --json
 aditor record --tab ABC123 --selector '.preview > canvas' --duration 10 -o canvas.mp4 --json
 
-# Também funciona em background, finalizando com stop.
+# Also works in the background; finalize with stop.
 aditor record --tab ABC123 --selector '#player' -o player.mp4 --json
 aditor stop rec-... --json
 ```
 
-O seletor deve encontrar **exatamente um elemento renderizado** no documento principal. Seletores inválidos, vazios, ausentes, ambíguos ou elementos ocultos retornam erro; não há fallback para capturar a aba inteira. Não atravessa iframes nem shadow DOM. Use aspas no shell para preservar espaços e caracteres do seletor.
+The selector must match **exactly one rendered element** in the main document. Invalid, empty, missing, or ambiguous selectors and hidden elements return an error; there is no fallback to capturing the entire tab. Selectors do not cross iframe or shadow DOM boundaries. Quote selectors in the shell to preserve spaces and special characters.
 
-A captura recorta o retângulo do elemento, incluindo sua borda, mesmo fora do viewport. Não rola a página nem muda o foco. Trata-se de um recorte da página renderizada: sobreposições e recortes de ancestrais continuam aparecendo; não extrai uma camada isolada do DOM.
+Capture crops the element's rectangle, including its border, even outside the viewport. It does not scroll the page or change focus. This is a crop of the rendered page: overlays and ancestor clipping remain visible; it does not extract an isolated DOM layer.
 
-Durante o vídeo, o seletor e o retângulo são reavaliados a cada frame. Para recorte preciso, prefira um contêiner de posição fixa com conteúdo animado: movimentos rápidos do próprio contêiner entre a medição e a captura podem incluir bordas do fundo. Mantenha as dimensões do elemento fixas: se ele mudar de tamanho, desaparecer ou ficar oculto, a gravação termina com erro e finaliza o trecho já capturado. Vídeos podem receber até um pixel de preenchimento para manter dimensões pares exigidas pelo codec. `--dry-run --json` inclui o seletor no plano sem conectar ao navegador.
+During video recording, the selector and rectangle are reevaluated every frame. For precise cropping, prefer a fixed-position container with animated content: fast movement of the container itself between measurement and capture may include background edges. Keep the element's dimensions fixed: if it resizes, disappears, or becomes hidden, recording ends with an error and finalizes the footage already captured. Videos may receive up to one pixel of padding to maintain the even dimensions required by the codec. `--dry-run --json` includes the selector in the plan without connecting to the browser.
 
-## Monitores e prints
+## Monitors and screenshots
 
-No macOS, liste os índices de captura antes de escolher o monitor:
+On macOS, list capture indices before choosing a monitor:
 
 ```sh
 aditor screens --json
@@ -126,54 +126,54 @@ aditor screens --json
 
 aditor record --screen 1 --duration 10 -o monitor.mp4 --json
 aditor screenshot --screen 1 -o monitor.png --json
-aditor print --screen 0 --json  # alias de screenshot
+aditor print --screen 0 --json  # alias for screenshot
 ```
 
-`screen` é o índice do monitor, não o índice de câmera do AVFoundation. Sem `--screen` nem `--tab`, o macOS captura o monitor 0. O terminal precisa ter permissão de Gravação de Tela no macOS. `--audio` inclui o microfone na gravação nativa; `--audio-device` escolhe o dispositivo.
+`screen` is the monitor index, not the AVFoundation camera index. Without `--screen` or `--tab`, macOS captures monitor 0. The terminal needs Screen Recording permission on macOS. `--audio` includes the microphone in native recordings; `--audio-device` selects the device.
 
-`--screen`, `--tab` e `--video-device` são mutuamente exclusivos. Em Linux, a captura nativa usa X11 (`--video-device :0.0`, padrão `$DISPLAY`); em Windows, usa GDI (`--video-device desktop` ou `--video-device 'title=Nome da janela'`). A enumeração e seleção de monitores por `--screen` estão disponíveis no macOS. Nas outras plataformas, essa opção retorna erro em vez de ignorar o monitor solicitado.
+`--screen`, `--tab`, and `--video-device` are mutually exclusive. On Linux, native capture uses X11 (`--video-device :0.0`, default: `$DISPLAY`); on Windows, it uses GDI (`--video-device desktop` or `--video-device 'title=Window name'`). Monitor enumeration and selection through `--screen` are available on macOS. On other platforms, this option returns an error instead of ignoring the requested monitor.
 
-## Contrato para agentes
+## Agent interface
 
-- `--json`: sucesso em JSON no stdout; logs e erros no stderr. Falhas têm código de saída diferente de zero.
-- `--dry-run`: mostra o plano/comando, sem capturar nem criar diretórios de saída. Com `--tab`, não conecta ao navegador. O plano de vídeo mostra que `pipe:0` recebe frames CDP; o comando FFmpeg sozinho não produz essa entrada.
-- `record --duration`: aguarda o término e retorna o arquivo finalizado.
-- `record` sem duração: retorna `id`, `pid`, `output` e o comando `stop`. Vale para abas e captura nativa.
-- `stop ID`: finaliza o MP4 antes de retornar; sem ID, exige uma única sessão. `stop --all` encerra as sessões.
-- `screenshot`/`print`: salva um único PNG e termina, sem sessão em background.
-- `-o`: caminho do arquivo; sem ele, vídeos vão para `~/Documents/Videos` e prints para `~/Documents/Pictures`. `--dir` troca o diretório. Capturas retornam caminhos absolutos.
-- Arquivos existentes são recusados; `--yes` autoriza sobrescrever. Prints exigem extensão `.png`.
+- `--json`: successful results as JSON on stdout; logs and errors on stderr. Failures return a nonzero exit code.
+- `--dry-run`: show the plan/command without capturing or creating output directories. With `--tab`, do not connect to the browser. The video plan shows that `pipe:0` receives CDP frames; the FFmpeg command alone does not produce that input.
+- `record --duration`: wait until complete and return the finalized file.
+- `record` without a duration: return `id`, `pid`, `output`, and the `stop` command. Works for both tabs and native capture.
+- `stop ID`: finalize the MP4 before returning; without an ID, require exactly one session. `stop --all` stops all sessions.
+- `screenshot`/`print`: save a single PNG and exit, without a background session.
+- `-o`: output file path; when omitted, videos go to `~/Documents/Videos` and screenshots to `~/Documents/Pictures`. `--dir` changes the directory. Capture commands return absolute paths.
+- Existing files are refused; `--yes` allows overwriting. Screenshots require the `.png` extension.
 
-## Edição
+## Video editing
 
 ```sh
-aditor info entrada.mp4 --json
-aditor speed entrada.mp4 -x 1.5 -o rapido.mp4 --json
-aditor cut entrada.mp4 --from 00:01:30 --duration 10 -o trecho.mp4
-aditor edit entrada.mp4 --from 5 --duration 20 --speed 2 --mute -o editado.mp4
-aditor convert entrada.mp4 --codec hevc -o menor.mp4
+aditor info input.mp4 --json
+aditor speed input.mp4 -x 1.5 -o faster.mp4 --json
+aditor cut input.mp4 --from 00:01:30 --duration 10 -o clip.mp4
+aditor edit input.mp4 --from 5 --duration 20 --speed 2 --mute -o edited.mp4
+aditor convert input.mp4 --codec hevc -o smaller.mp4
 aditor doctor --json
 ```
 
-## Validação
+## Validation
 
 ```sh
 cargo test
 cargo clippy --all-targets -- -D warnings
+cargo build
 python3 tests/browser_cli.py \
   --browser '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
   --aditor target/debug/aditor
 ```
 
-O teste de integração inicia um Chrome headless com perfil temporário e verifica seleção de aba, recorte por CSS selector (dimensões e conteúdo), PNG, sobrescrita, duração de vídeo, background/stop, erros e dry-run. Não usa o perfil pessoal do navegador. Requer Chrome/Chromium, FFmpeg e ffprobe no PATH.
+The integration test starts headless Chrome with a temporary profile and checks tab selection, CSS selector cropping (dimensions and content), PNG output, overwriting, video duration, background/stop, errors, and dry runs. It does not use your personal browser profile. Requires Chrome/Chromium and FFmpeg/ffprobe on PATH.
 
+## Contributing
 
-## Contribua
+Have a capture or editing workflow you want to automate? [Open an issue](https://github.com/victorlcampos/aditor/issues) with your use case, operating system, and expected result. Fixes and improvements via pull request are welcome; run the checks above before submitting.
 
-Tem um fluxo de captura ou edição que gostaria de automatizar? [Abra uma issue](https://github.com/victorlcampos/aditor/issues) com o cenário, o sistema operacional e o resultado esperado. Correções e melhorias via pull request são bem-vindas; execute as verificações acima antes de enviar.
+If Aditor fits your next agent, **give it a star and try your first capture**.
 
-Se o Aditor faz sentido para o seu próximo agente, **deixe uma estrela e experimente sua primeira captura**.
+## License
 
-## Licença
-
-Código distribuído sob a [licença MIT](LICENSE). FFmpeg e ffprobe são componentes de terceiros, sujeitos às respectivas licenças da distribuição utilizada.
+Code is distributed under the [MIT license](LICENSE). FFmpeg and ffprobe are third-party components subject to the licenses of the distribution used.

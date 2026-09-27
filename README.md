@@ -240,7 +240,7 @@ aditor combine main.mp4 inset.mp4 --layout pip \
 # Burn a stopwatch or countdown into the video.
 aditor timer demo.mp4 --mode stopwatch --format mmss -o timed.mp4 --json
 aditor timer demo.mp4 --mode countdown --from 2 --to 12 \
-  --tenths --box -o countdown.mp4
+  --tenths --no-box -o countdown.mp4
 ```
 
 `crop` accepts the same time notation as `cut` and can also crop a pixel rectangle.
@@ -289,8 +289,9 @@ with FFmpeg's `drawtext` filter (same font requirements as `write`).
 value (default: 0 for stopwatch, the visible length for countdown), and
 `--tenths` appends a tenths-of-a-second digit. `--from`/`--to`/`--duration`
 limit when the timer is visible (default: the whole video); `--x`/`--y` accept
-pixel positions or FFmpeg expressions such as `w-tw-20`, and `--box` draws a
-background box (`--box-color`, `--box-margin`). `--dry-run --json` previews the
+pixel positions or FFmpeg expressions such as `w-tw-20`. The timer renders at
+36 px with a subtle drop shadow over a background box (`--box-color`,
+`--box-margin`); pass `--no-box` for bare text. `--dry-run --json` previews the
 command without requiring a `drawtext` build.
 
 ## Validation

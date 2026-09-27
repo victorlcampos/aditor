@@ -47,7 +47,7 @@ const examples = {
     "prerequisite": "Use two existing videos. Sizes, frame rates, and lengths are normalized; --duration longest keeps the shorter side frozen. Supports --dry-run and --yes."
   },
   timer: {
-    "command": "aditor timer demo.mp4 --mode countdown \\\n  --from 2 --to 12 --tenths --box \\\n  -o countdown.mp4 --json",
+    "command": "aditor timer demo.mp4 --mode countdown \\\n  --from 2 --to 12 --tenths \\\n  -o countdown.mp4 --json",
     "description": "Burn a stopwatch or countdown into the video, with hms, mmss, or seconds formats and an optional visible window.",
     "prerequisite": "Replace --mode countdown with stopwatch to count up. Requires FFmpeg with drawtext. Preview with --dry-run."
   },

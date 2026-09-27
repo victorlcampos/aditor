@@ -109,7 +109,7 @@ pub struct TimerArgs {
     #[arg(long, default_value = "20")]
     y: String,
     /// Font size in pixels
-    #[arg(long, default_value_t = 32)]
+    #[arg(long, default_value_t = 36)]
     font_size: u32,
     /// Text color: name or hex, optionally with @opacity (e.g. white@0.8)
     #[arg(long, default_value = "white")]
@@ -117,14 +117,14 @@ pub struct TimerArgs {
     /// Font file; otherwise FFmpeg selects its default font
     #[arg(long)]
     font_file: Option<PathBuf>,
-    /// Draw a background box behind the timer for readability
-    #[arg(long = "box", default_value_t = false)]
-    draw_box: bool,
-    /// Box color (used with --box)
+    /// Disable the background box drawn behind the timer for readability
+    #[arg(long, default_value_t = false)]
+    no_box: bool,
+    /// Box color (the background box is drawn unless --no-box is passed)
     #[arg(long, default_value = "black@0.6")]
     box_color: String,
-    /// Box border width in pixels (used with --box)
-    #[arg(long, default_value_t = 8)]
+    /// Box border width in pixels (padding around the timer text)
+    #[arg(long, default_value_t = 12)]
     box_margin: u32,
     /// Append a tenths-of-a-second digit (MM:SS.d, HH:MM:SS.d, S.d)
     #[arg(long, default_value_t = false)]
@@ -876,7 +876,9 @@ fn timer_filter(text: &str, enable: &str, a: &TimerArgs) -> String {
             filter_value(&path.to_string_lossy())
         ));
     }
-    if a.draw_box {
+    // Subtle drop shadow for depth; background box (on by default) for contrast.
+    filter.push_str(":shadowcolor=black@0.7:shadowx=2:shadowy=2");
+    if !a.no_box {
         filter.push_str(&format!(
             ":box=1:boxcolor={}:boxborderw={}",
             filter_value(&a.box_color),
@@ -1060,7 +1062,7 @@ fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn sample_timer_args(draw_box: bool) -> TimerArgs {
+    fn sample_timer_args(no_box: bool) -> TimerArgs {
         TimerArgs {
             input: PathBuf::from("in.mp4"),
             mode: "stopwatch".to_string(),
@@ -1074,9 +1076,9 @@ mod tests {
             font_size: 32,
             color: "white".to_string(),
             font_file: None,
-            draw_box,
+            no_box,
             box_color: "black@0.6".to_string(),
-            box_margin: 8,
+            box_margin: 12,
             tenths: false,
             out: OutOpts {
                 output: None,
@@ -1177,11 +1179,11 @@ mod tests {
             "--mode",
             "countdown",
             "--tenths",
-            "--box"
+            "--no-box"
         ])
         .is_ok());
         // The filtergraph splitter only honors escapes inside quotes.
-        let plain = sample_timer_args(false);
+        let plain = sample_timer_args(true);
         let filter = timer_filter(
             &timer_text(&up, TimerFormat::Mmss, false),
             "gte(t\\,0.000)*lt(t\\,2.000)",
@@ -1189,13 +1191,18 @@ mod tests {
         );
         assert!(filter.starts_with("drawtext=text='%{eif"), "{filter}");
         assert!(filter.contains(":expansion=normal:"), "{filter}");
+        assert!(
+            filter.contains(":shadowcolor=black@0.7:shadowx=2:shadowy=2"),
+            "{filter}"
+        );
+        assert!(!filter.contains(":box=1"), "{filter}");
         let boxed = timer_filter(
             &timer_text(&up, TimerFormat::Seconds, true),
             "gte(t\\,0.000)*lt(t\\,2.000)",
-            &sample_timer_args(true),
+            &sample_timer_args(false),
         );
         assert!(
-            boxed.contains(":box=1:boxcolor=black@0.6:boxborderw=8"),
+            boxed.contains(":box=1:boxcolor=black@0.6:boxborderw=12"),
             "{boxed}"
         );
     }

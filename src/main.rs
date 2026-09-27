@@ -90,6 +90,8 @@ enum Cmd {
     Timer(editing::TimerArgs),
     /// Burn a still image (e.g. a Canva drawing) into the video
     Overlay(editing::OverlayArgs),
+    /// Render a pen-drawing animation (transparent video) for overlay
+    Stroke(editing::StrokeArgs),
     /// Single pipeline: trimming, speed, and codec in one pass
     Edit(EditArgs),
     /// Re-encode with a different codec without changing the content
@@ -311,6 +313,7 @@ fn main() -> Result<()> {
         Cmd::Combine(a) => editing::combine(a),
         Cmd::Timer(a) => editing::timer(a),
         Cmd::Overlay(a) => editing::overlay(a),
+        Cmd::Stroke(a) => editing::stroke(a),
         Cmd::Edit(a) => cmd_edit(a),
         Cmd::Convert(a) => cmd_convert(a),
         Cmd::Record(a) => cmd_record(a),

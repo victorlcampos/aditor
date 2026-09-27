@@ -245,6 +245,10 @@ aditor timer demo.mp4 --mode countdown --from 2 --to 12 \
 # Burn a drawing (e.g. a Canva export) into the video.
 aditor overlay demo.mp4 drawing.png --x 20 --y 20 \
   --from 2 --to 5 -o annotated.mp4 --json
+
+# Render a pen-drawing animation, then burn it in with overlay.
+aditor stroke --shape ring --color '#ff7900' --width 400 --height 400 \
+  --line-width 12 -o ring.mov --json
 ```
 
 `crop` accepts the same time notation as `cut` and can also crop a pixel rectangle.
@@ -308,6 +312,14 @@ blends the image over the footage, and `--from`/`--to`/`--duration` limit when
 it is visible (default: the whole video). The output keeps the base duration
 and audio.
 
+`stroke [--shape ring|underline|arrow|box] [--color COLOR] [--width W]
+[--height H] [--line-width PX] [--draw-duration S] [--hold-duration S]
+[--fps N]` renders a pen-drawing animation as a transparent `.mov`
+(`qtrle` + alpha), ready to burn in with `overlay`. Each shape draws itself
+progressively with a round brush head and pen tip, then holds the finished
+stroke. Colors accept names, `#rgb`/`#rrggbb`/`#rrggbbaa` hex, and `@opacity`
+such as `red@0.8`. Supports `--json`, `--dry-run`, and `--yes`.
+
 ## Validation
 
 ```sh
@@ -323,8 +335,8 @@ python3 tests/browser_cli.py \
 
 The editing integration test generates synthetic media and checks crop dimensions,
 insertion order and duration, audio/silence, timed text, side-by-side/stacked/
-picture-in-picture layouts, stopwatch/countdown timers, image overlays,
-dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
+picture-in-picture layouts, stopwatch/countdown timers, image overlays, pen
+strokes, dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
 `--font-file /path/to/font.ttf` to select one explicitly. `ADITOR_FFMPEG` can select
 a separate FFmpeg build for the CLI under test.
 

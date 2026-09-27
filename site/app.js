@@ -56,6 +56,11 @@ const examples = {
     "description": "Burn any drawing into the video: export a PNG from your favorite design tool and place it with pixel or expression positions.",
     "prerequisite": "Use an existing video and image. PNG transparency is kept; --width/--height resize and --opacity blends. Supports --dry-run and --yes."
   },
+  stroke: {
+    "command": "aditor stroke --shape ring \\\n  --color '#ff7900' --width 400 --height 400 \\\n  --line-width 12 -o ring.mov --json",
+    "description": "Render a pen-drawing animation (ring, underline, arrow, or box) as a transparent video, ready to burn in with overlay.",
+    "prerequisite": "Pick any color name or hex with optional @opacity, any canvas size and brush thickness. Supports --dry-run and --yes."
+  },
   background: {
     command: 'aditor record --tab ABC123 \\\n  -o demo.mp4 --json\n\n# Later, use the returned recording ID:\naditor stop RECORDING_ID --json',
     description: 'Start recording in the background. Stop by session ID to finalize the MP4.',

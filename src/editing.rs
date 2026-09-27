@@ -136,6 +136,41 @@ pub struct TimerArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct OverlayArgs {
+    input: PathBuf,
+    /// Still image to burn into the video (PNG with transparency works best)
+    image: PathBuf,
+    /// Horizontal position (pixels or FFmpeg expression, e.g. 20 or W-w-20)
+    #[arg(long, default_value = "(W-w)/2")]
+    x: String,
+    /// Vertical position (pixels or FFmpeg expression, e.g. 20 or H-h-20)
+    #[arg(long, default_value = "(H-h)/2")]
+    y: String,
+    /// Show the overlay from this video timestamp
+    #[arg(long)]
+    from: Option<String>,
+    /// Show the overlay until this video timestamp (exclusive)
+    #[arg(long, conflicts_with = "duration")]
+    to: Option<String>,
+    /// Show the overlay for this long starting at --from
+    #[arg(long)]
+    duration: Option<String>,
+    /// Overlay width in pixels (keeps aspect when used without --height)
+    #[arg(long)]
+    width: Option<u32>,
+    /// Overlay height in pixels (keeps aspect when used without --width)
+    #[arg(long)]
+    height: Option<u32>,
+    /// Opacity from 0 (invisible) to 1 (opaque)
+    #[arg(long, default_value_t = 1.0)]
+    opacity: f64,
+    #[command(flatten)]
+    out: OutOpts,
+    #[command(flatten)]
+    enc: EncOpts,
+}
+
+#[derive(Args, Debug)]
 pub struct WriteArgs {
     input: PathBuf,
     /// Literal UTF-8 text; FFmpeg text expansion is disabled
@@ -452,6 +487,109 @@ pub fn append(a: AppendArgs) -> Result<()> {
         args.extend(["-map".into(), "[a]".into()]);
     }
     render(&a.input, &[&a.insert], "append", &a.out, &a.enc, args)
+}
+
+// ---------------------------------------------------------------------------
+// overlay: burn a still image (e.g. a Canva drawing) into the video
+// ---------------------------------------------------------------------------
+
+/// Scale filter for the overlay leg: keeps the aspect ratio when a single
+/// side is given, stretches to the exact size with both, and keeps the
+/// native (even) size with neither.
+fn overlay_scale_filter(width: Option<u32>, height: Option<u32>) -> String {
+    match (width, height) {
+        (None, None) => "scale=ceil(iw/2)*2:ceil(ih/2)*2".to_string(),
+        (Some(w), None) => format!("scale={}:-2", even_dim(u64::from(w))),
+        (None, Some(h)) => format!("scale=-2:{}", even_dim(u64::from(h))),
+        (Some(w), Some(h)) => format!(
+            "scale={}:{}",
+            even_dim(u64::from(w)),
+            even_dim(u64::from(h))
+        ),
+    }
+}
+
+fn is_still_image(path: &Path) -> bool {
+    path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+        ["png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff"]
+            .contains(&s.to_ascii_lowercase().as_str())
+    })
+}
+
+pub fn overlay(a: OverlayArgs) -> Result<()> {
+    let base_meta = metadata(&a.input)?;
+    if !a.image.is_file() {
+        bail!("image does not exist: {}", a.image.display());
+    }
+    if !a.opacity.is_finite() || !(0.0..=1.0).contains(&a.opacity) {
+        bail!("--opacity must be between 0 and 1");
+    }
+    if a.x.trim().is_empty() || a.y.trim().is_empty() {
+        bail!("--x and --y must not be empty");
+    }
+    if a.width.is_some_and(|w| w == 0) || a.height.is_some_and(|h| h == 0) {
+        bail!("--width and --height must be positive");
+    }
+    let total = duration(&base_meta)?;
+    let timed = a.from.is_some() || a.to.is_some() || a.duration.is_some();
+    let (visible_start, visible_end) = if timed {
+        window(
+            a.from.as_deref(),
+            a.to.as_deref(),
+            a.duration.as_deref(),
+            total,
+        )?
+    } else {
+        (0.0, total)
+    };
+    let fps_s = fmt_sec(stream_fps(video(&base_meta)?));
+    let still = is_still_image(&a.image);
+
+    let mut args: Vec<String> = vec!["-i".into(), a.input.to_string_lossy().into_owned()];
+    if still {
+        args.extend([
+            "-loop".into(),
+            "1".into(),
+            "-framerate".into(),
+            fps_s.clone(),
+        ]);
+    }
+    args.extend(["-i".into(), a.image.to_string_lossy().into_owned()]);
+
+    let mut leg = format!(
+        "[1:v:0]{},setsar=1,fps={fps_s},format=rgba",
+        overlay_scale_filter(a.width, a.height)
+    );
+    if a.opacity < 1.0 {
+        leg.push_str(&format!(",colorchannelmixer=aa={}", a.opacity));
+    }
+    leg.push_str(",settb=AVTB[ov]");
+    // -t caps the output at the base duration (the looped image is infinite).
+    args.extend(
+        [
+            "-filter_complex",
+            &[
+                format!("[0:v:0]scale=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1,fps={fps_s},format=yuv420p,settb=AVTB[base]"),
+                leg,
+                format!(
+                    "[base][ov]overlay=x={}:y={}:enable=between(t\\,{}\\,{}):eof_action=pass[vout]",
+                    filter_value(&a.x),
+                    filter_value(&a.y),
+                    fmt_sec(visible_start),
+                    fmt_sec(visible_end)
+                ),
+            ]
+            .join(";"),
+            "-map",
+            "[vout]",
+            "-map",
+            "0:a:0?",
+            "-t",
+            &fmt_sec(total),
+        ]
+        .map(String::from),
+    );
+    render(&a.input, &[&a.image], "overlay", &a.out, &a.enc, args)
 }
 
 // ---------------------------------------------------------------------------
@@ -1205,6 +1343,42 @@ mod tests {
             boxed.contains(":box=1:boxcolor=black@0.6:boxborderw=12"),
             "{boxed}"
         );
+    }
+    #[test]
+    fn overlay_options_scale_and_reject_bad_values() {
+        assert_eq!(
+            overlay_scale_filter(None, None),
+            "scale=ceil(iw/2)*2:ceil(ih/2)*2"
+        );
+        assert_eq!(overlay_scale_filter(Some(100), None), "scale=100:-2");
+        assert_eq!(overlay_scale_filter(None, Some(50)), "scale=-2:50");
+        assert_eq!(overlay_scale_filter(Some(101), Some(51)), "scale=102:52");
+        assert!(is_still_image(Path::new("drawing.PNG")));
+        assert!(!is_still_image(Path::new("clip.mp4")));
+        assert!(Cli::try_parse_from(["aditor", "overlay", "in.mp4", "img.png"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "aditor",
+            "overlay",
+            "in.mp4",
+            "img.png",
+            "--opacity",
+            "0.5",
+            "--from",
+            "1"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["aditor", "overlay", "in.mp4"]).is_err());
+        assert!(Cli::try_parse_from([
+            "aditor",
+            "overlay",
+            "in.mp4",
+            "img.png",
+            "--to",
+            "1",
+            "--duration",
+            "1"
+        ])
+        .is_err());
     }
     #[test]
     fn frame_rates_and_dimensions_are_sanitized() {

@@ -134,6 +134,26 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
     windowed = timer('--from', 0.5, '--to', 1, name='windowed.mp4')
     assert pixels(windowed, 2) == pixels(windowed, 4)
     assert pixels(windowed, 2) != pixels(windowed, 7)
+    # Overlay: burn the green still into the red base at a corner and window.
+    def overlay(*args, name):
+        output = root / name
+        result = json.loads(run(binary, 'overlay', str(base), str(still), *map(str, args),
+                                '--codec', 'h264-sw', '-o', str(output), '--json'))
+        assert result['output'] == str(output)
+        return output
+
+    placed = overlay('--x', '0', '--y', '0', name='placed.mp4')
+    corner = pixels(placed, 5)[(5 * 160 + 5) * 3:][:3]
+    assert corner[1] > corner[0], corner
+    assert abs(float(probe(placed)['format']['duration']) - 2) < 0.2
+    assert any(s['codec_type'] == 'audio' for s in probe(placed)['streams'])
+    timed_ov = overlay('--x', '0', '--y', '0', '--from', 0.5, '--to', 1, name='timed-ov.mp4')
+    assert pixels(timed_ov, 2) == pixels(timed_ov, 4)
+    assert pixels(timed_ov, 2) != pixels(timed_ov, 7)
+    faded = overlay('--x', '0', '--y', '0', '--opacity', '0.5', '--width', '80',
+                    name='faded.mp4')
+    mid = pixels(faded, 5)[(5 * 160 + 5) * 3:][:3]
+    assert mid[0] > 50 and mid[1] > 50, mid
     dry = root / 'dry.mp4'
     result = json.loads(run(binary, 'append', str(base), str(still), '--at', '1', '--duration', '1',
                            '--dry-run', '--json', '-o', str(dry)))
@@ -149,6 +169,10 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
         timer_args += ['--font-file', options.font_file]
     result = json.loads(run(*timer_args))
     assert result['dry_run'] and not dry_timer.exists()
+    dry_overlay = root / 'dry-overlay.mp4'
+    result = json.loads(run(binary, 'overlay', str(base), str(still), '--x', '10', '--y', '10',
+                           '--dry-run', '--json', '-o', str(dry_overlay)))
+    assert result['dry_run'] and not dry_overlay.exists()
     for args in [
         ['crop', str(base), '--width', '999', '--height', '60'],
         ['crop', str(base), '--duration', '0'],
@@ -163,6 +187,10 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
         ['timer', str(base), '--from', '5'],
         ['timer', str(base), '--text', 'Hi'],
         ['timer', str(base), '--codec', 'copy'],
+        ['overlay', str(base), str(still), '--opacity', '2'],
+        ['overlay', str(base), str(root / 'missing.png')],
+        ['overlay', str(base), str(still), '--to', '1', '--duration', '1'],
+        ['overlay', str(base), str(still), '-o', str(base), '--yes'],
         ['crop', str(base), '--duration', '1', '-o', str(base), '--yes'],
         ['crop', str(base), '--duration', '1', '-o', str(cropped)],
     ]:

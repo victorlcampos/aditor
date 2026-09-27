@@ -241,6 +241,10 @@ aditor combine main.mp4 inset.mp4 --layout pip \
 aditor timer demo.mp4 --mode stopwatch --format mmss -o timed.mp4 --json
 aditor timer demo.mp4 --mode countdown --from 2 --to 12 \
   --tenths --no-box -o countdown.mp4
+
+# Render a pen-drawing animation, then burn it in with overlay.
+aditor stroke --shape ring --color '#ff7900' --width 400 --height 400 \
+  --line-width 12 -o ring.mov --json
 ```
 
 `crop` accepts the same time notation as `cut` and can also crop a pixel rectangle.
@@ -294,6 +298,14 @@ pixel positions or FFmpeg expressions such as `w-tw-20`. The timer renders at
 `--box-margin`); pass `--no-box` for bare text. `--dry-run --json` previews the
 command without requiring a `drawtext` build.
 
+`stroke [--shape ring|underline|arrow|box] [--color COLOR] [--width W]
+[--height H] [--line-width PX] [--draw-duration S] [--hold-duration S]
+[--fps N]` renders a pen-drawing animation as a transparent `.mov`
+(`qtrle` + alpha), ready to burn in with `overlay`. Each shape draws itself
+progressively with a round brush head and pen tip, then holds the finished
+stroke. Colors accept names, `#rgb`/`#rrggbb`/`#rrggbbaa` hex, and `@opacity`
+such as `red@0.8`. Supports `--json`, `--dry-run`, and `--yes`.
+
 ## Validation
 
 ```sh
@@ -309,8 +321,8 @@ python3 tests/browser_cli.py \
 
 The editing integration test generates synthetic media and checks crop dimensions,
 insertion order and duration, audio/silence, timed text, side-by-side/stacked/
-picture-in-picture layouts, stopwatch/countdown timers, dry runs, and invalid
-inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
+picture-in-picture layouts, stopwatch/countdown timers, pen strokes,
+dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
 `--font-file /path/to/font.ttf` to select one explicitly. `ADITOR_FFMPEG` can select
 a separate FFmpeg build for the CLI under test.
 

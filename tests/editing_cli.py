@@ -149,6 +149,36 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
         timer_args += ['--font-file', options.font_file]
     result = json.loads(run(*timer_args))
     assert result['dry_run'] and not dry_timer.exists()
+    # Stroke: transparent pen animations that grow, then hold.
+    def stroke(*args, name):
+        output = root / name
+        result = json.loads(run(binary, 'stroke', *map(str, args), '-o', str(output), '--json'))
+        assert result['output'] == str(output)
+        return output
+
+    def alpha_pixels(path, frame):
+        data = run('ffmpeg', '-v', 'error', '-ss', str(frame / 30),
+                   '-i', str(path), '-frames:v', '1',
+                   '-f', 'rawvideo', '-pix_fmt', 'argb', '-')
+        return sum(1 for i in range(0, len(data), 4) if data[i] > 10)
+
+    ring = stroke('--shape', 'ring', '--color', '#ff0000', '--width', '160',
+                  '--height', '160', '--line-width', '8',
+                  '--draw-duration', '0.5', '--hold-duration', '0.5', name='ring.mov')
+    meta = probe(ring)
+    assert (meta['streams'][0]['width'], meta['streams'][0]['height']) == (160, 160), meta
+    assert meta['streams'][0]['pix_fmt'] == 'argb', meta
+    assert abs(float(meta['format']['duration']) - 1) < 0.2, meta
+    assert alpha_pixels(ring, 3) < alpha_pixels(ring, 9) <= alpha_pixels(ring, 24)
+    for shape in ('underline', 'arrow', 'box'):
+        other = stroke('--shape', shape, '--color', 'yellow', '--width', '160',
+                       '--height', '120', '--draw-duration', '0.4', '--hold-duration', '0.4',
+                       name=f'{shape}.mov')
+        assert abs(float(probe(other)['format']['duration']) - 0.8) < 0.2
+    dry_stroke = root / 'dry-stroke.mov'
+    result = json.loads(run(binary, 'stroke', '--shape', 'box',
+                           '--dry-run', '--json', '-o', str(dry_stroke)))
+    assert result['dry_run'] and not dry_stroke.exists()
     for args in [
         ['crop', str(base), '--width', '999', '--height', '60'],
         ['crop', str(base), '--duration', '0'],
@@ -163,6 +193,12 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
         ['timer', str(base), '--from', '5'],
         ['timer', str(base), '--text', 'Hi'],
         ['timer', str(base), '--codec', 'copy'],
+        ['stroke', '--shape', 'star'],
+        ['stroke', '--color', 'blurple'],
+        ['stroke', '--fps', '0'],
+        ['stroke', '--width', '0'],
+        ['stroke', '--draw-duration', '0', '--hold-duration', '0'],
+        ['stroke', '--line-width', '100', '--width', '160', '--height', '160'],
         ['crop', str(base), '--duration', '1', '-o', str(base), '--yes'],
         ['crop', str(base), '--duration', '1', '-o', str(cropped)],
     ]:

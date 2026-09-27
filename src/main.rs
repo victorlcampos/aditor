@@ -88,6 +88,8 @@ enum Cmd {
     Combine(editing::CombineArgs),
     /// Burn a stopwatch or countdown timer into the video
     Timer(editing::TimerArgs),
+    /// Render a pen-drawing animation (transparent video) for overlay
+    Stroke(editing::StrokeArgs),
     /// Single pipeline: trimming, speed, and codec in one pass
     Edit(EditArgs),
     /// Re-encode with a different codec without changing the content
@@ -308,6 +310,7 @@ fn main() -> Result<()> {
         Cmd::Write(a) => editing::write(a),
         Cmd::Combine(a) => editing::combine(a),
         Cmd::Timer(a) => editing::timer(a),
+        Cmd::Stroke(a) => editing::stroke(a),
         Cmd::Edit(a) => cmd_edit(a),
         Cmd::Convert(a) => cmd_convert(a),
         Cmd::Record(a) => cmd_record(a),

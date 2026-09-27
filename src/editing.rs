@@ -136,6 +136,37 @@ pub struct TimerArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct StrokeArgs {
+    /// Shape to draw: ring | underline | arrow | box
+    #[arg(long, default_value = "ring")]
+    shape: String,
+    /// Brush color: name (red, orange, yellow, ...), #rgb, #rrggbb or
+    /// #rrggbbaa, optionally with @opacity (e.g. red@0.8, #ff0000@0.5)
+    #[arg(long, default_value = "red")]
+    color: String,
+    /// Canvas width in pixels (1-4096)
+    #[arg(long, default_value_t = 640)]
+    width: u32,
+    /// Canvas height in pixels (1-4096)
+    #[arg(long, default_value_t = 360)]
+    height: u32,
+    /// Brush thickness in pixels
+    #[arg(long, default_value_t = 10)]
+    line_width: u32,
+    /// Seconds spent drawing the shape
+    #[arg(long, default_value_t = 1.5)]
+    draw_duration: f64,
+    /// Seconds holding the finished shape
+    #[arg(long, default_value_t = 2.0)]
+    hold_duration: f64,
+    /// Frames per second (1-120)
+    #[arg(long, default_value_t = 30)]
+    fps: u32,
+    #[command(flatten)]
+    out: OutOpts,
+}
+
+#[derive(Args, Debug)]
 pub struct WriteArgs {
     input: PathBuf,
     /// Literal UTF-8 text; FFmpeg text expansion is disabled
@@ -978,6 +1009,448 @@ pub fn timer(a: TimerArgs) -> Result<()> {
     )
 }
 
+// ---------------------------------------------------------------------------
+// stroke: render a pen-drawing animation (transparent video) for overlay
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StrokeShape {
+    Ring,
+    Underline,
+    Arrow,
+    Box,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Rgba {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Brush {
+    color: Rgba,
+    width: f64,
+}
+
+fn parse_stroke_shape(value: &str) -> Result<StrokeShape> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "ring" | "circle" | "ellipse" | "oval" => Ok(StrokeShape::Ring),
+        "underline" | "line" => Ok(StrokeShape::Underline),
+        "arrow" => Ok(StrokeShape::Arrow),
+        "box" | "rect" | "rectangle" => Ok(StrokeShape::Box),
+        other => bail!("unknown shape: {other} (ring|underline|arrow|box)"),
+    }
+}
+
+fn named_brush_color(name: &str) -> Option<(u8, u8, u8)> {
+    match name {
+        "black" => Some((0, 0, 0)),
+        "white" => Some((255, 255, 255)),
+        "red" => Some((255, 0, 0)),
+        "lime" => Some((0, 255, 0)),
+        "blue" => Some((0, 0, 255)),
+        "yellow" => Some((255, 255, 0)),
+        "cyan" | "aqua" => Some((0, 255, 255)),
+        "magenta" | "fuchsia" => Some((255, 0, 255)),
+        "orange" => Some((255, 121, 0)),
+        "purple" => Some((128, 0, 128)),
+        "pink" => Some((255, 192, 203)),
+        "gray" | "grey" => Some((128, 128, 128)),
+        _ => None,
+    }
+}
+
+fn hex_byte(pair: &str) -> Result<u8> {
+    u8::from_str_radix(pair, 16).with_context(|| format!("invalid color hex: {pair}"))
+}
+
+/// Parse names (#rgb/#rrggbb/#rrggbbaa) with an optional @opacity suffix.
+fn parse_stroke_color(value: &str) -> Result<Rgba> {
+    let (base, opacity) = match value.rsplit_once('@') {
+        Some((b, o)) => {
+            let factor: f64 = o
+                .parse()
+                .with_context(|| format!("invalid color opacity: {o}"))?;
+            if !factor.is_finite() || !(0.0..=1.0).contains(&factor) {
+                bail!("color opacity must be between 0 and 1 (@{o})");
+            }
+            (b, factor)
+        }
+        None => (value, 1.0),
+    };
+    let base = base.trim().to_ascii_lowercase();
+    let (r, g, b, a) = if let Some(hex) = base.strip_prefix('#') {
+        match hex.len() {
+            3 => {
+                let v: Vec<u8> = hex
+                    .chars()
+                    .map(|c| hex_byte(&format!("{c}{c}")))
+                    .collect::<Result<_>>()?;
+                (v[0], v[1], v[2], 255)
+            }
+            6 => (
+                hex_byte(&hex[0..2])?,
+                hex_byte(&hex[2..4])?,
+                hex_byte(&hex[4..6])?,
+                255,
+            ),
+            8 => (
+                hex_byte(&hex[0..2])?,
+                hex_byte(&hex[2..4])?,
+                hex_byte(&hex[4..6])?,
+                hex_byte(&hex[6..8])?,
+            ),
+            _ => bail!("invalid color: {value} (use a name, #rgb, #rrggbb or #rrggbbaa)"),
+        }
+    } else if let Some((r, g, b)) = named_brush_color(base.as_str()) {
+        (r, g, b, 255)
+    } else {
+        bail!("unknown color: {value} (use a name, #rgb, #rrggbb or #rrggbbaa)");
+    };
+    Ok(Rgba {
+        r,
+        g,
+        b,
+        a: ((f64::from(a) * opacity).round() as u32).min(255) as u8,
+    })
+}
+
+/// Source-over blend of one pixel onto the canvas.
+fn blend_pixel(canvas: &mut [u8], width: u32, x: i64, y: i64, color: Rgba) {
+    if x < 0 || y < 0 || x >= i64::from(width) {
+        return;
+    }
+    let height = canvas.len() / (width as usize * 4);
+    if y >= height as i64 {
+        return;
+    }
+    let i = (y as usize * width as usize + x as usize) * 4;
+    let (sa, da) = (f64::from(color.a) / 255.0, f64::from(canvas[i + 3]) / 255.0);
+    let out_a = sa + da * (1.0 - sa);
+    if out_a <= 0.0 {
+        return;
+    }
+    for (k, c) in [color.r, color.g, color.b].iter().enumerate() {
+        let blended = (f64::from(*c) * sa + f64::from(canvas[i + k]) * da * (1.0 - sa)) / out_a;
+        canvas[i + k] = blended.round() as u8;
+    }
+    canvas[i + 3] = (out_a * 255.0).round() as u8;
+}
+
+/// Filled disc stamp: the round brush head.
+fn stamp(canvas: &mut [u8], width: u32, cx: f64, cy: f64, radius: f64, color: Rgba) {
+    let r = radius.ceil() as i64;
+    for y in (cy as i64 - r)..=(cy as i64 + r) {
+        for x in (cx as i64 - r)..=(cx as i64 + r) {
+            let dx = x as f64 - cx;
+            let dy = y as f64 - cy;
+            if dx * dx + dy * dy <= radius * radius {
+                blend_pixel(canvas, width, x, y, color);
+            }
+        }
+    }
+}
+
+/// Straight brush segment between two points.
+fn segment(canvas: &mut [u8], width: u32, x0: f64, y0: f64, x1: f64, y1: f64, brush: Brush) {
+    let dist = ((x1 - x0).hypot(y1 - y0)).max(0.0);
+    let steps = (dist / 0.5).ceil() as usize + 1;
+    for i in 0..steps {
+        let t = if steps == 1 {
+            0.0
+        } else {
+            i as f64 / (steps - 1) as f64
+        };
+        stamp(
+            canvas,
+            width,
+            x0 + (x1 - x0) * t,
+            y0 + (y1 - y0) * t,
+            brush.width / 2.0,
+            brush.color,
+        );
+    }
+}
+
+/// Pen tip dot (dark head with a light glint) at the drawing head.
+fn pen_tip(canvas: &mut [u8], width: u32, x: f64, y: f64, brush: Brush) {
+    let r = brush.width * 0.75;
+    let dark = Rgba {
+        r: (f64::from(brush.color.r) * 0.6) as u8,
+        g: (f64::from(brush.color.g) * 0.6) as u8,
+        b: (f64::from(brush.color.b) * 0.6) as u8,
+        a: brush.color.a,
+    };
+    stamp(canvas, width, x, y, r, dark);
+    stamp(
+        canvas,
+        width,
+        x - r * 0.35,
+        y - r * 0.35,
+        r * 0.35,
+        Rgba {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 200,
+        },
+    );
+}
+
+/// Point along a rectangle perimeter at distance `d` (clockwise from top-left).
+fn perimeter_point(w: f64, h: f64, m: f64, d: f64) -> (f64, f64) {
+    let (rw, rh) = (w - 2.0 * m, h - 2.0 * m);
+    let total = 2.0 * (rw + rh);
+    let mut d = d.rem_euclid(total);
+    let edges = [
+        ((m, m), (m + rw, m)),
+        ((m + rw, m), (m + rw, m + rh)),
+        ((m + rw, m + rh), (m, m + rh)),
+        ((m, m + rh), (m, m)),
+    ];
+    for ((x0, y0), (x1, y1)) in edges {
+        let len = (x1 - x0).hypot(y1 - y0);
+        if d <= len {
+            let t = if len == 0.0 { 0.0 } else { d / len };
+            return (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+        }
+        d -= len;
+    }
+    (m, m)
+}
+
+/// Paint the shape at progress 0..=1; returns the pen tip position.
+fn paint_stroke(
+    canvas: &mut [u8],
+    width: u32,
+    height: u32,
+    shape: StrokeShape,
+    progress: f64,
+    brush: Brush,
+) -> (f64, f64) {
+    let (w, h) = (f64::from(width), f64::from(height));
+    let m = brush.width;
+    let p = progress.clamp(0.0, 1.0);
+    match shape {
+        StrokeShape::Ring => {
+            let (rx, ry) = (w / 2.0 - m, h / 2.0 - m);
+            let sweep = 340.0_f64.to_radians() * p;
+            let steps = (sweep * rx.max(ry) / 0.75).ceil() as usize;
+            let (mut px, mut py) = (w / 2.0, h / 2.0 - ry);
+            for i in 1..=steps.max(1) {
+                let a = -std::f64::consts::FRAC_PI_2 + sweep * i as f64 / steps.max(1) as f64;
+                let (x, y) = (w / 2.0 + rx * a.cos(), h / 2.0 + ry * a.sin());
+                segment(canvas, width, px, py, x, y, brush);
+                (px, py) = (x, y);
+            }
+            let tip = -std::f64::consts::FRAC_PI_2 + sweep;
+            (w / 2.0 + rx * tip.cos(), h / 2.0 + ry * tip.sin())
+        }
+        StrokeShape::Underline => {
+            let (x0, x1, y) = (m, w - m, h / 2.0);
+            let x = x0 + (x1 - x0) * p;
+            segment(canvas, width, x0, y, x, y, brush);
+            (x, y)
+        }
+        StrokeShape::Arrow => {
+            let head_len = (brush.width * 4.0).max(24.0);
+            let (x0, tip_x, y) = (m, w - m, h / 2.0);
+            let shaft_end = tip_x - head_len;
+            let drawn = x0 + (shaft_end - x0) * (p / 0.8).min(1.0);
+            segment(canvas, width, x0, y, drawn, y, brush);
+            let q = ((p - 0.8) / 0.2).clamp(0.0, 1.0);
+            if q > 0.0 {
+                let barb = 30.0_f64.to_radians();
+                for sign in [-1.0, 1.0] {
+                    segment(
+                        canvas,
+                        width,
+                        tip_x,
+                        y,
+                        tip_x - head_len * q * barb.cos(),
+                        y + sign * head_len * q * barb.sin(),
+                        brush,
+                    );
+                }
+                (tip_x, y)
+            } else {
+                (drawn, y)
+            }
+        }
+        StrokeShape::Box => {
+            let total = 2.0 * ((w - 2.0 * m) + (h - 2.0 * m));
+            let target = total * p;
+            let mut d = 0.0;
+            let step = 0.75;
+            while d < target {
+                let next = (d + step).min(target);
+                let (x0, y0) = perimeter_point(w, h, m, d);
+                let (x1, y1) = perimeter_point(w, h, m, next);
+                segment(canvas, width, x0, y0, x1, y1, brush);
+                d = next;
+            }
+            perimeter_point(w, h, m, target)
+        }
+    }
+}
+
+pub fn stroke(a: StrokeArgs) -> Result<()> {
+    let shape = parse_stroke_shape(&a.shape)?;
+    let color = parse_stroke_color(&a.color)?;
+    if a.width == 0 || a.width > 4096 || a.height == 0 || a.height > 4096 {
+        bail!("--width and --height must be between 1 and 4096");
+    }
+    if a.line_width == 0 || f64::from(a.line_width) > f64::from(a.width.min(a.height)) / 4.0 {
+        bail!("--line-width must be positive and at most a quarter of the smaller side");
+    }
+    if a.fps == 0 || a.fps > 120 {
+        bail!("--fps must be between 1 and 120 (got {})", a.fps);
+    }
+    for (name, value) in [
+        ("--draw-duration", a.draw_duration),
+        ("--hold-duration", a.hold_duration),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            bail!("{name} must be zero or greater");
+        }
+    }
+    let draw_frames = (a.draw_duration * f64::from(a.fps)).round() as usize;
+    let hold_frames = (a.hold_duration * f64::from(a.fps)).round() as usize;
+    if draw_frames + hold_frames == 0 {
+        bail!("--draw-duration and --hold-duration cannot both be zero");
+    }
+    let output = a
+        .out
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("stroke.mov"));
+    if output.exists() && !a.out.yes && !a.out.dry_run {
+        bail!(
+            "output already exists (use --yes to overwrite): {}",
+            output.display()
+        );
+    }
+    let ffmpeg = resolve_ffmpeg()?;
+    if !run_capture(&ffmpeg, &["-hide_banner", "-encoders"])?.contains(" qtrle ") {
+        bail!("FFmpeg has no qtrle encoder; set ADITOR_FFMPEG to a full build");
+    }
+    let brush = Brush {
+        color,
+        width: f64::from(a.line_width),
+    };
+    let render_frame = |progress: f64| {
+        let mut canvas = vec![0u8; a.width as usize * a.height as usize * 4];
+        let (tx, ty) = paint_stroke(&mut canvas, a.width, a.height, shape, progress, brush);
+        if progress > 0.0 && progress < 1.0 {
+            pen_tip(&mut canvas, a.width, tx, ty, brush);
+        }
+        canvas
+    };
+
+    let mut args: Vec<String> = vec!["-hide_banner".into()];
+    args.push(if a.out.yes { "-y".into() } else { "-n".into() });
+    args.extend(
+        [
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+            &format!("{}x{}", a.width, a.height),
+            "-framerate",
+            &a.fps.to_string(),
+            "-i",
+            "pipe:0",
+            "-c:v",
+            "qtrle",
+        ]
+        .map(String::from),
+    );
+    args.push(output.to_string_lossy().to_string());
+    let cmd_str = shell_quote(&ffmpeg, &args);
+    if a.out.dry_run {
+        if a.out.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "shape": a.shape,
+                    "color": a.color,
+                    "width": a.width,
+                    "height": a.height,
+                    "line_width": a.line_width,
+                    "draw_duration": a.draw_duration,
+                    "hold_duration": a.hold_duration,
+                    "fps": a.fps,
+                    "frames": draw_frames + hold_frames,
+                    "output": output.to_string_lossy(),
+                    "video_codec": "qtrle",
+                    "ffmpeg_cmd": cmd_str,
+                    "dry_run": true,
+                }))?
+            );
+        } else {
+            println!("{cmd_str}");
+        }
+        return Ok(());
+    }
+
+    eprintln!("rendering {} frames: {cmd_str}", draw_frames + hold_frames);
+    let mut child = std::process::Command::new(&ffmpeg)
+        .args(&args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("execute {}", ffmpeg.display()))?;
+    let frames: Vec<Vec<u8>> = (0..draw_frames)
+        .map(|i| render_frame((i + 1) as f64 / draw_frames.max(1) as f64))
+        .chain((0..hold_frames).map(|_| render_frame(1.0)))
+        .collect();
+    {
+        use std::io::Write as _;
+        let stdin = child.stdin.as_mut().context("open ffmpeg stdin")?;
+        for frame in &frames {
+            stdin.write_all(frame).context("write frame to ffmpeg")?;
+        }
+    }
+    let status = child.wait().context("wait for ffmpeg")?;
+    if !status.success() {
+        bail!("ffmpeg failed (status {status})");
+    }
+    if !output.exists() {
+        bail!(
+            "ffmpeg exited successfully but the output was not found: {}",
+            output.display()
+        );
+    }
+    if a.out.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "shape": a.shape,
+                "color": a.color,
+                "width": a.width,
+                "height": a.height,
+                "line_width": a.line_width,
+                "draw_duration": a.draw_duration,
+                "hold_duration": a.hold_duration,
+                "fps": a.fps,
+                "frames": draw_frames + hold_frames,
+                "output": output.to_string_lossy(),
+                "video_codec": "qtrle",
+                "ffmpeg_cmd": cmd_str,
+                "dry_run": false,
+            }))?
+        );
+    } else {
+        println!("ok → {}", output.display());
+    }
+    Ok(())
+}
+
 fn render(
     input: &Path,
     extra_inputs: &[&Path],
@@ -1205,6 +1678,80 @@ mod tests {
             boxed.contains(":box=1:boxcolor=black@0.6:boxborderw=12"),
             "{boxed}"
         );
+    }
+    #[test]
+    fn stroke_options_parse_colors_shapes_and_geometry() {
+        assert_eq!(
+            parse_stroke_color("#f00").unwrap(),
+            Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }
+        );
+        assert_eq!(
+            parse_stroke_color("#00ff0080").unwrap(),
+            Rgba {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 128
+            }
+        );
+        assert_eq!(
+            parse_stroke_color("orange").unwrap(),
+            Rgba {
+                r: 255,
+                g: 121,
+                b: 0,
+                a: 255
+            }
+        );
+        assert_eq!(
+            parse_stroke_color("#ff0000@0.5").unwrap(),
+            Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 128
+            }
+        );
+        assert_eq!(
+            parse_stroke_color("blue@0.25").unwrap(),
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 255,
+                a: 64
+            }
+        );
+        for bad in ["blurple", "#12", "#gggggg", "red@2", "red@NaN", ""] {
+            assert!(parse_stroke_color(bad).is_err(), "{bad}");
+        }
+        assert!(parse_stroke_shape("ring").is_ok());
+        assert!(parse_stroke_shape("CIRCLE").is_ok());
+        assert!(parse_stroke_shape("arrow").is_ok());
+        assert!(parse_stroke_shape("rect").is_ok());
+        assert!(parse_stroke_shape("star").is_err());
+        assert_eq!(perimeter_point(100.0, 60.0, 10.0, 0.0), (10.0, 10.0));
+        assert_eq!(perimeter_point(100.0, 60.0, 10.0, 80.0), (90.0, 10.0));
+        assert_eq!(perimeter_point(100.0, 60.0, 10.0, 120.0), (90.0, 50.0));
+        assert!(Cli::try_parse_from(["aditor", "stroke"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "aditor",
+            "stroke",
+            "--shape",
+            "arrow",
+            "--color",
+            "#00ff00",
+            "--width",
+            "200",
+            "--line-width",
+            "6",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["aditor", "stroke", "--fps", "abc"]).is_err());
     }
     #[test]
     fn frame_rates_and_dimensions_are_sanitized() {

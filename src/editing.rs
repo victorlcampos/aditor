@@ -598,6 +598,15 @@ pub fn overlay(a: OverlayArgs) -> Result<()> {
     };
     let fps_s = fmt_sec(stream_fps(video(&base_meta)?));
     let still = is_still_image(&a.image);
+    // A video overlay shorter than the visibility window would vanish at EOF
+    // (the input plays from t=0 regardless of --from), so freeze its last
+    // frame up to the window end. Looped stills are already infinite.
+    let overlay_freeze = if still {
+        0.0
+    } else {
+        let overlay_dur = duration(&metadata(&a.image)?)?;
+        (visible_end - overlay_dur).max(0.0)
+    };
 
     let mut args: Vec<String> = vec!["-i".into(), a.input.to_string_lossy().into_owned()];
     if still {
@@ -617,6 +626,12 @@ pub fn overlay(a: OverlayArgs) -> Result<()> {
     if a.opacity < 1.0 {
         leg.push_str(&format!(",colorchannelmixer=aa={}", a.opacity));
     }
+    if overlay_freeze > COMBINE_EPS {
+        leg.push_str(&format!(
+            ",tpad=stop_mode=clone:stop_duration={}",
+            fmt_sec(overlay_freeze)
+        ));
+    }
     leg.push_str(",settb=AVTB[ov]");
     // -t caps the output at the base duration (the looped image is infinite).
     args.extend(
@@ -626,7 +641,7 @@ pub fn overlay(a: OverlayArgs) -> Result<()> {
                 format!("[0:v:0]scale=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1,fps={fps_s},format=yuv420p,settb=AVTB[base]"),
                 leg,
                 format!(
-                    "[base][ov]overlay=x={}:y={}:enable=between(t\\,{}\\,{}):eof_action=pass[vout]",
+                    "[base][ov]overlay=x={}:y={}:enable=between(t\\,{}\\,{}):eof_action=repeat[vout]",
                     filter_value(&a.x),
                     filter_value(&a.y),
                     fmt_sec(visible_start),

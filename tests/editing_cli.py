@@ -154,6 +154,14 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
                     name='faded.mp4')
     mid = pixels(faded, 5)[(5 * 160 + 5) * 3:][:3]
     assert mid[0] > 50 and mid[1] > 50, mid
+    # A 1s video overlay shown until 1.5s freezes on its last frame past EOF.
+    output = root / 'frozen.mp4'
+    result = json.loads(run(binary, 'overlay', str(base), str(clip), '--x', '0', '--y', '0',
+                            '--from', '0.5', '--to', '1.5',
+                            '--codec', 'h264-sw', '-o', str(output), '--json'))
+    assert result['output'] == str(output)
+    late = pixels(output, 14)[(5 * 160 + 5) * 3:][:3]
+    assert late[2] > late[0], late
     dry = root / 'dry.mp4'
     result = json.loads(run(binary, 'append', str(base), str(still), '--at', '1', '--duration', '1',
                            '--dry-run', '--json', '-o', str(dry)))

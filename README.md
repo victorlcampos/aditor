@@ -314,7 +314,8 @@ overlay (`w`, `h`) dimensions (default: centered). A single `--width` or
 `--height` keeps the aspect ratio; sizes round up to even. `--opacity`
 blends the image over the footage, and `--from`/`--to`/`--duration` limit when
 it is visible (default: the whole video). The output keeps the base duration
-and audio.
+and audio. A video overlay shorter than its visibility window freezes on its
+last frame instead of vanishing (still images loop forever).
 
 `stroke [--shape ring|underline|arrow|box] [--color COLOR] [--width W]
 [--height H] [--line-width PX] [--draw-duration S] [--hold-duration S]

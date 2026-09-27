@@ -242,6 +242,10 @@ aditor timer demo.mp4 --mode stopwatch --format mmss -o timed.mp4 --json
 aditor timer demo.mp4 --mode countdown --from 2 --to 12 \
   --tenths --no-box -o countdown.mp4
 
+# Burn a drawing (e.g. a Canva export) into the video.
+aditor overlay demo.mp4 drawing.png --x 20 --y 20 \
+  --from 2 --to 5 -o annotated.mp4 --json
+
 # Render a pen-drawing animation, then burn it in with overlay.
 aditor stroke --shape ring --color '#ff7900' --width 400 --height 400 \
   --line-width 12 -o ring.mov --json
@@ -298,6 +302,16 @@ pixel positions or FFmpeg expressions such as `w-tw-20`. The timer renders at
 `--box-margin`); pass `--no-box` for bare text. `--dry-run --json` previews the
 command without requiring a `drawtext` build.
 
+`overlay INPUT IMAGE [--x X] [--y Y] [--from/--to/--duration] [--width W]
+[--height H] [--opacity 0-1]` burns a still image into the video — draw
+anything in any tool (Canva, Figma, a sketch app), export a PNG, and place it.
+Position accepts pixels or FFmpeg expressions using the base (`W`, `H`) and
+overlay (`w`, `h`) dimensions (default: centered). A single `--width` or
+`--height` keeps the aspect ratio; sizes round up to even. `--opacity`
+blends the image over the footage, and `--from`/`--to`/`--duration` limit when
+it is visible (default: the whole video). The output keeps the base duration
+and audio.
+
 `stroke [--shape ring|underline|arrow|box] [--color COLOR] [--width W]
 [--height H] [--line-width PX] [--draw-duration S] [--hold-duration S]
 [--fps N]` renders a pen-drawing animation as a transparent `.mov`
@@ -321,8 +335,8 @@ python3 tests/browser_cli.py \
 
 The editing integration test generates synthetic media and checks crop dimensions,
 insertion order and duration, audio/silence, timed text, side-by-side/stacked/
-picture-in-picture layouts, stopwatch/countdown timers, pen strokes,
-dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
+picture-in-picture layouts, stopwatch/countdown timers, image overlays, pen
+strokes, dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
 `--font-file /path/to/font.ttf` to select one explicitly. `ADITOR_FFMPEG` can select
 a separate FFmpeg build for the CLI under test.
 

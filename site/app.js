@@ -51,6 +51,11 @@ const examples = {
     "description": "Burn a stopwatch or countdown into the video, with hms, mmss, or seconds formats and an optional visible window.",
     "prerequisite": "Replace --mode countdown with stopwatch to count up. Requires FFmpeg with drawtext. Preview with --dry-run."
   },
+  overlay: {
+    "command": "aditor overlay demo.mp4 drawing.png \\\n  --x 20 --y 20 --from 2 --to 5 \\\n  -o annotated.mp4 --json",
+    "description": "Burn any drawing into the video: export a PNG from your favorite design tool and place it with pixel or expression positions.",
+    "prerequisite": "Use an existing video and image. PNG transparency is kept; --width/--height resize and --opacity blends. Supports --dry-run and --yes."
+  },
   stroke: {
     "command": "aditor stroke --shape ring \\\n  --color '#ff7900' --width 400 --height 400 \\\n  --line-width 12 -o ring.mov --json",
     "description": "Render a pen-drawing animation (ring, underline, arrow, or box) as a transparent video, ready to burn in with overlay.",

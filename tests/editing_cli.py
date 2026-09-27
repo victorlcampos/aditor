@@ -89,10 +89,66 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
     interval = edit('write', '--text', 'Visible', '--from', 0.5, '--to', 1, name='interval.mp4')
     assert pixels(interval, 4) == pixels(interval, 10)
     assert pixels(interval, 4) != pixels(interval, 5)
+    # Combine: side-by-side, stacked, and picture-in-picture of base + clip.
+    def combine(*args, name):
+        output = root / name
+        result = json.loads(run(binary, 'combine', str(base), str(clip), *map(str, args),
+                                '--codec', 'h264-sw', '-o', str(output), '--json'))
+        assert result['output'] == str(output)
+        return output
+
+    side = combine('--layout', 'horizontal', name='side.mp4')
+    meta = probe(side)
+    assert (meta['streams'][0]['width'], meta['streams'][0]['height']) == (280, 120), meta
+    assert abs(float(meta['format']['duration']) - 2) < 0.2, meta
+    data = pixels(side, 5)
+    left = data[(60 * 280 + 40) * 3:][:3]
+    right = data[(60 * 280 + 220) * 3:][:3]
+    assert left[0] > 200 and left[2] < 30, left
+    assert right[2] > right[0], right
+    stacked = combine('--layout', 'vertical', name='stacked.mp4')
+    meta = probe(stacked)
+    assert (meta['streams'][0]['width'], meta['streams'][0]['height']) == (160, 280), meta
+    pip = combine('--layout', 'pip', name='pip.mp4')
+    meta = probe(pip)
+    assert (meta['streams'][0]['width'], meta['streams'][0]['height']) == (160, 120), meta
+    short = combine('--duration', 'shortest', '--audio', 'mix', name='short.mp4')
+    assert abs(float(probe(short)['format']['duration']) - 1) < 0.2
+    assert any(s['codec_type'] == 'audio' for s in probe(short)['streams'])
+    # Timer: stopwatch counts up, countdown counts down, window limits visibility.
+    def timer(*args, name):
+        output = root / name
+        extra = list(args)
+        if options.font_file:
+            extra = [*extra, '--font-file', options.font_file]
+        result = json.loads(run(binary, 'timer', str(base), *map(str, extra),
+                                '--codec', 'h264-sw', '-o', str(output), '--json'))
+        assert result['output'] == str(output)
+        return output
+
+    watch = timer(name='watch.mp4')
+    assert pixels(watch, 5) != pixels(base, 5)
+    assert pixels(watch, 5) != pixels(watch, 15)
+    down = timer('--mode', 'countdown', name='down.mp4')
+    assert pixels(down, 5) != pixels(watch, 5)
+    windowed = timer('--from', 0.5, '--to', 1, name='windowed.mp4')
+    assert pixels(windowed, 2) == pixels(windowed, 4)
+    assert pixels(windowed, 2) != pixels(windowed, 7)
     dry = root / 'dry.mp4'
     result = json.loads(run(binary, 'append', str(base), str(still), '--at', '1', '--duration', '1',
                            '--dry-run', '--json', '-o', str(dry)))
     assert result['dry_run'] and not dry.exists()
+    dry_combine = root / 'dry-combine.mp4'
+    result = json.loads(run(binary, 'combine', str(base), str(clip), '--layout', 'pip',
+                           '--dry-run', '--json', '-o', str(dry_combine)))
+    assert result['dry_run'] and not dry_combine.exists()
+    dry_timer = root / 'dry-timer.mp4'
+    timer_args = [binary, 'timer', str(base), '--mode', 'countdown',
+                  '--dry-run', '--json', '-o', str(dry_timer)]
+    if options.font_file:
+        timer_args += ['--font-file', options.font_file]
+    result = json.loads(run(*timer_args))
+    assert result['dry_run'] and not dry_timer.exists()
     for args in [
         ['crop', str(base), '--width', '999', '--height', '60'],
         ['crop', str(base), '--duration', '0'],
@@ -100,6 +156,13 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
         ['append', str(base), str(clip), '--at', '3'],
         ['write', str(base), '--text', 'Hi', '--frame', '20'],
         ['write', str(base), '--text', 'Hi', '--codec', 'copy'],
+        ['combine', str(base), str(clip), '--layout', 'diagonal'],
+        ['combine', str(base), str(clip), '--pip-scale', '2'],
+        ['combine', str(base), str(clip), '--layout', 'horizontal', '-o', str(base), '--yes'],
+        ['timer', str(base), '--mode', 'alarm'],
+        ['timer', str(base), '--from', '5'],
+        ['timer', str(base), '--text', 'Hi'],
+        ['timer', str(base), '--codec', 'copy'],
         ['crop', str(base), '--duration', '1', '-o', str(base), '--yes'],
         ['crop', str(base), '--duration', '1', '-o', str(cropped)],
     ]:

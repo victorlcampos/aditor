@@ -84,6 +84,10 @@ enum Cmd {
     Append(editing::AppendArgs),
     /// Draw literal text on a frame or time interval
     Write(editing::WriteArgs),
+    /// Join two videos: side-by-side, stacked, or picture-in-picture
+    Combine(editing::CombineArgs),
+    /// Burn a stopwatch or countdown timer into the video
+    Timer(editing::TimerArgs),
     /// Single pipeline: trimming, speed, and codec in one pass
     Edit(EditArgs),
     /// Re-encode with a different codec without changing the content
@@ -302,6 +306,8 @@ fn main() -> Result<()> {
         Cmd::Crop(a) => editing::crop(a),
         Cmd::Append(a) => editing::append(a),
         Cmd::Write(a) => editing::write(a),
+        Cmd::Combine(a) => editing::combine(a),
+        Cmd::Timer(a) => editing::timer(a),
         Cmd::Edit(a) => cmd_edit(a),
         Cmd::Convert(a) => cmd_convert(a),
         Cmd::Record(a) => cmd_record(a),

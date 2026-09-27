@@ -249,6 +249,10 @@ aditor overlay demo.mp4 drawing.png --x 20 --y 20 \
 # Render a pen-drawing animation, then burn it in with overlay.
 aditor stroke --shape ring --color '#ff7900' --width 400 --height 400 \
   --line-width 12 -o ring.mov --json
+
+# Speak subtitles with synchronized text-to-speech.
+aditor narrate tour.srt --voice Luciana -o narration.wav --json
+aditor narrate tour.srt --video demo.mp4 --engine auto -o narrated.mp4
 ```
 
 `crop` accepts the same time notation as `cut` and can also crop a pixel rectangle.
@@ -320,6 +324,15 @@ progressively with a round brush head and pen tip, then holds the finished
 stroke. Colors accept names, `#rgb`/`#rrggbb`/`#rrggbbaa` hex, and `@opacity`
 such as `red@0.8`. Supports `--json`, `--dry-run`, and `--yes`.
 
+`narrate SUBS.SRT [--video INPUT] [--engine auto|say|espeak|sapi] [--voice V]
+[--rate R] [--volume 0-2]` speaks each subtitle cue at its timestamp using the
+OS text-to-speech engine (`say` on macOS, SAPI on Windows, `espeak-ng` on
+Linux; install it when missing). Speech that overruns its cue window is
+time-stretched to fit; shorter lines leave natural gaps. Without `--video`,
+writes a 48 kHz stereo WAV; with it, mixes the narration over the original
+audio (video stream-copied) trimmed to the video length. Supports `--json`,
+`--dry-run`, and `--yes`.
+
 ## Validation
 
 ```sh
@@ -336,7 +349,8 @@ python3 tests/browser_cli.py \
 The editing integration test generates synthetic media and checks crop dimensions,
 insertion order and duration, audio/silence, timed text, side-by-side/stacked/
 picture-in-picture layouts, stopwatch/countdown timers, image overlays, pen
-strokes, dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
+strokes, synchronized narration (skipped without an OS TTS engine),
+dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
 `--font-file /path/to/font.ttf` to select one explicitly. `ADITOR_FFMPEG` can select
 a separate FFmpeg build for the CLI under test.
 

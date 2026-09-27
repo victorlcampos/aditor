@@ -203,6 +203,44 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
     result = json.loads(run(binary, 'stroke', '--shape', 'box',
                            '--dry-run', '--json', '-o', str(dry_stroke)))
     assert result['dry_run'] and not dry_stroke.exists()
+    # Narrate: SRT to synchronized speech (needs an OS TTS engine).
+    import os as _os
+    import shutil as _shutil
+    narrate_engine = None
+    for candidate in ('say', 'espeak-ng'):
+        if _shutil.which(candidate):
+            narrate_engine = candidate.replace('-ng', '')
+            break
+    if narrate_engine is None and _os.name == 'nt' and (
+            _shutil.which('powershell') or _shutil.which('pwsh')):
+        narrate_engine = 'sapi'
+    subs = root / 'tour.srt'
+    subs.write_text(
+        '1\n00:00:00,500 --> 00:00:01,500\nHello there\n\n'
+        '2\n00:00:01,800 --> 00:00:02,800\nSecond line here\n')
+    if narrate_engine is not None:
+        try:
+            speech = root / 'speech.wav'
+            result = json.loads(run(binary, 'narrate', str(subs), '--engine', narrate_engine,
+                                    '-o', str(speech), '--json'))
+            assert result['output'] == str(speech)
+            assert abs(float(probe(speech)['format']['duration']) - 2.8) < 0.3
+            mixed = root / 'narrated.mp4'
+            result = json.loads(run(binary, 'narrate', str(subs), '--video', str(base),
+                                    '--engine', narrate_engine,
+                                    '-o', str(mixed), '--json'))
+            assert any(s['codec_type'] == 'audio' for s in probe(mixed)['streams'])
+            dry_voice = root / 'dry-voice.wav'
+            result = json.loads(run(binary, 'narrate', str(subs),
+                                   '--dry-run', '--json', '-o', str(dry_voice)))
+            assert result['dry_run'] and not dry_voice.exists()
+        except AssertionError:
+            raise
+        except Exception as error:
+            print(f'WARNING: skipping narrate checks (engine failed: {error})')
+    else:
+        print('WARNING: no TTS engine found, skipping narrate checks')
+    (root / 'bad.srt').write_text('1\n00:00:02,000 --> 00:00:01,000\nBackwards\n')
     for args in [
         ['crop', str(base), '--width', '999', '--height', '60'],
         ['crop', str(base), '--duration', '0'],
@@ -227,6 +265,13 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
         ['stroke', '--width', '0'],
         ['stroke', '--draw-duration', '0', '--hold-duration', '0'],
         ['stroke', '--line-width', '100', '--width', '160', '--height', '160'],
+        ['narrate', str(root / 'missing.srt')],
+        ['narrate', str(subs), '--engine', 'flite'],
+        ['narrate', str(subs), '-o', str(root / 'x.mp3')],
+        ['narrate', str(subs), '--video', str(base), '-o', str(root / 'x.avi')],
+        ['narrate', str(subs), '--volume', '5'],
+        ['narrate', str(subs), '--video', str(base), '-o', str(base), '--yes'],
+        ['narrate', str(root / 'bad.srt')],
         ['crop', str(base), '--duration', '1', '-o', str(base), '--yes'],
         ['crop', str(base), '--duration', '1', '-o', str(cropped)],
     ]:

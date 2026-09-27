@@ -230,6 +230,17 @@ aditor write input.mp4 --text "Custom title" --from 2 --to 5 \
   --color 'white@0.8' -o title.mp4
 aditor convert input.mp4 --codec hevc -o smaller.mp4
 aditor doctor --json
+
+# Place two videos next to each other, one above the other, or overlaid.
+aditor combine left.mp4 right.mp4 --layout horizontal -o side.mp4 --json
+aditor combine top.mp4 bottom.mp4 --layout vertical -o stacked.mp4
+aditor combine main.mp4 inset.mp4 --layout pip \
+  --pip-position br --pip-scale 0.3 -o pip.mp4
+
+# Burn a stopwatch or countdown into the video.
+aditor timer demo.mp4 --mode stopwatch --format mmss -o timed.mp4 --json
+aditor timer demo.mp4 --mode countdown --from 2 --to 12 \
+  --tenths --box -o countdown.mp4
 ```
 
 `crop` accepts the same time notation as `cut` and can also crop a pixel rectangle.
@@ -262,6 +273,26 @@ to `<input-name>-crop.mp4`, `-append.mp4`, or `-write.mp4` beside the source.
 Input files cannot be overwritten in place. Dry runs inspect media metadata and
 print the FFmpeg command without producing output.
 
+`combine INPUT SECOND --layout LAYOUT` joins two videos in one frame.
+`horizontal` (the default) places them side by side, `vertical` stacks them,
+and `pip` overlays the second video in a corner of the first
+(`--pip-position tl|tr|bl|br`, `--pip-scale` as a fraction of the base width,
+`--pip-margin` in pixels). Inputs with different sizes, frame rates, or lengths
+are normalized: the output lasts `--duration longest|shortest|first|second`
+(default: `longest`, with the shorter side frozen on its last frame) and audio
+follows `--audio auto|first|second|mix|none` (default: the first input that has
+audio).
+
+`timer INPUT --mode stopwatch|countdown` burns a running clock into the video
+with FFmpeg's `drawtext` filter (same font requirements as `write`).
+`--format hms|mmss|seconds` selects the display, `--start` sets the initial
+value (default: 0 for stopwatch, the visible length for countdown), and
+`--tenths` appends a tenths-of-a-second digit. `--from`/`--to`/`--duration`
+limit when the timer is visible (default: the whole video); `--x`/`--y` accept
+pixel positions or FFmpeg expressions such as `w-tw-20`, and `--box` draws a
+background box (`--box-color`, `--box-margin`). `--dry-run --json` previews the
+command without requiring a `drawtext` build.
+
 ## Validation
 
 ```sh
@@ -276,7 +307,8 @@ python3 tests/browser_cli.py \
 ```
 
 The editing integration test generates synthetic media and checks crop dimensions,
-insertion order and duration, audio/silence, timed text, dry runs, and invalid
+insertion order and duration, audio/silence, timed text, side-by-side/stacked/
+picture-in-picture layouts, stopwatch/countdown timers, dry runs, and invalid
 inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
 `--font-file /path/to/font.ttf` to select one explicitly. `ADITOR_FFMPEG` can select
 a separate FFmpeg build for the CLI under test.

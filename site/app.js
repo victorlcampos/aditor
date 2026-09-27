@@ -40,7 +40,17 @@ const examples = {
     "command": "aditor write demo.mp4 --text \"Step 1\" \\\n  --from 2 --to 5 --x 40 --y 80 \\\n  --font-file /path/to/font.ttf \\\n  --font-size 48 --color \"white@0.8\" \\\n  -o labeled.mp4 --json",
     "description": "Place text at a pixel position with a chosen font file, font size, color, and opacity. Use --frame 30 instead of the interval to label one frame (zero-based).",
     "prerequisite": "Replace /path/to/font.ttf with a font file, or omit --font-file for the default font. Requires FFmpeg with drawtext. The end time is exclusive; --x and --y are measured from the left and top edges."
-},
+  },
+  combine: {
+    "command": "aditor combine left.mp4 right.mp4 \\\n  --layout horizontal \\\n  -o side.mp4 --json",
+    "description": "Join two videos in one frame: side by side (horizontal), stacked (vertical), or overlaid (pip with --pip-position and --pip-scale).",
+    "prerequisite": "Use two existing videos. Sizes, frame rates, and lengths are normalized; --duration longest keeps the shorter side frozen. Supports --dry-run and --yes."
+  },
+  timer: {
+    "command": "aditor timer demo.mp4 --mode countdown \\\n  --from 2 --to 12 --tenths --box \\\n  -o countdown.mp4 --json",
+    "description": "Burn a stopwatch or countdown into the video, with hms, mmss, or seconds formats and an optional visible window.",
+    "prerequisite": "Replace --mode countdown with stopwatch to count up. Requires FFmpeg with drawtext. Preview with --dry-run."
+  },
   background: {
     command: 'aditor record --tab ABC123 \\\n  -o demo.mp4 --json\n\n# Later, use the returned recording ID:\naditor stop RECORDING_ID --json',
     description: 'Start recording in the background. Stop by session ID to finalize the MP4.',

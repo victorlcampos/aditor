@@ -260,6 +260,21 @@ pub struct FramesArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct PipelineArgs {
+    /// Recipe JSON file ('-' reads stdin): {steps: [{id, args}], output?}
+    recipe: PathBuf,
+    /// Forward --yes to every step (otherwise, steps refuse existing outputs)
+    #[arg(long, default_value_t = false)]
+    yes: bool,
+    /// Print resolved step commands without running anything
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+    /// Print a JSON summary (for agents) instead of plain text
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct WriteArgs {
     input: PathBuf,
     /// Literal UTF-8 text; FFmpeg text expansion is disabled
@@ -2463,6 +2478,355 @@ pub fn frames(a: FramesArgs) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// pipeline: run a DAG of aditor steps with a single final output
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize, Debug)]
+struct RecipeStep {
+    id: String,
+    args: Vec<String>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct Recipe {
+    steps: Vec<RecipeStep>,
+    #[serde(default)]
+    output: Option<String>,
+}
+
+fn valid_step_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Reference tokens (`$id` or `${id}`) inside one argument.
+/// `$$` escapes to a literal `$`; malformed `${` stays literal.
+// while-let fits: the loop also peeks/consumes ahead inside its body.
+#[allow(clippy::while_let_on_iterator)]
+fn extract_refs(arg: &str) -> Vec<String> {
+    let mut refs = vec![];
+    let mut chars = arg.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '$' {
+            continue;
+        }
+        if chars.peek() == Some(&'$') {
+            chars.next();
+            continue;
+        }
+        if chars.peek() == Some(&'{') {
+            chars.next();
+            let mut name = String::new();
+            while let Some(&d) = chars.peek() {
+                if d == '}' {
+                    chars.next();
+                    break;
+                }
+                name.push(d);
+                chars.next();
+            }
+            if valid_step_id(&name) && !refs.contains(&name) {
+                refs.push(name);
+            }
+            continue;
+        }
+        let mut name = String::new();
+        while let Some(&d) = chars.peek() {
+            if d.is_ascii_alphanumeric() || d == '-' || d == '_' {
+                name.push(d);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if !name.is_empty() && !refs.contains(&name) {
+            refs.push(name);
+        }
+    }
+    refs
+}
+
+/// Substitute `$id`/`${id}` tokens with step outputs (`$$` becomes `$`).
+/// Unknown tokens stay literal (validation rejects them beforehand).
+// while-let fits: the loop also peeks/consumes ahead inside its body.
+#[allow(clippy::while_let_on_iterator)]
+fn substitute_refs(arg: &str, outputs: &std::collections::HashMap<String, String>) -> String {
+    const ESCAPED: &str = "\u{E000}";
+    let arg = arg.replace("$$", ESCAPED);
+    let mut out = String::with_capacity(arg.len());
+    let mut chars = arg.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '$' {
+            out.push(c);
+            continue;
+        }
+        if chars.peek() == Some(&'{') {
+            chars.next();
+            let mut name = String::new();
+            let mut closed = false;
+            while let Some(d) = chars.next() {
+                if d == '}' {
+                    closed = true;
+                    break;
+                }
+                name.push(d);
+            }
+            if closed {
+                if let Some(path) = outputs.get(&name) {
+                    out.push_str(path);
+                    continue;
+                }
+            }
+            out.push_str("${");
+            out.push_str(&name);
+            if closed {
+                out.push('}');
+            }
+            continue;
+        }
+        let mut name = String::new();
+        while let Some(&d) = chars.peek() {
+            if d.is_ascii_alphanumeric() || d == '-' || d == '_' {
+                name.push(d);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if name.is_empty() {
+            out.push('$');
+        } else if let Some(path) = outputs.get(&name) {
+            out.push_str(path);
+        } else {
+            out.push('$');
+            out.push_str(&name);
+        }
+    }
+    out.replace(ESCAPED, "$")
+}
+
+/// Declared output of a step: the value of -o/--output/--dir.
+fn step_output(id: &str, args: &[String]) -> Result<String> {
+    let mut iter = args.iter().peekable();
+    // Skip argv[0] (the subcommand); flags start after it.
+    let mut first = true;
+    while let Some(arg) = iter.next() {
+        if first {
+            first = false;
+            continue;
+        }
+        if let Some(value) = arg
+            .strip_prefix("--output=")
+            .or_else(|| arg.strip_prefix("--dir="))
+        {
+            return Ok(value.to_string());
+        }
+        if arg == "-o" || arg == "--output" || arg == "--dir" {
+            match iter.next() {
+                Some(value) if !value.starts_with('-') || value.len() == 1 => {
+                    return Ok(value.clone());
+                }
+                _ => bail!("step '{id}' flag {arg} needs a value"),
+            }
+        }
+        if arg.starts_with("-o") && arg.len() > 2 && !arg.starts_with("--") {
+            return Ok(arg[2..].to_string());
+        }
+    }
+    bail!("step '{id}' must declare -o/--output/--dir so later steps can use it")
+}
+
+/// Order steps so dependencies run first (Kahn, stable in file order).
+/// Unknown references and self-references fail before sorting.
+fn sort_steps(steps: &[RecipeStep]) -> Result<Vec<usize>> {
+    let ids: Vec<&str> = steps.iter().map(|s| s.id.as_str()).collect();
+    let mut deps: Vec<Vec<usize>> = vec![Vec::new(); steps.len()];
+    for (n, step) in steps.iter().enumerate() {
+        let mut seen = vec![];
+        for arg in &step.args {
+            for name in extract_refs(arg) {
+                match ids.iter().position(|id| *id == name) {
+                    Some(m) if m == n => {
+                        bail!("step '{0}' references its own output", step.id)
+                    }
+                    Some(m) => {
+                        if !seen.contains(&m) {
+                            seen.push(m);
+                        }
+                    }
+                    None => {
+                        let hint = if name.contains('-') {
+                            " (use ${id} to join a reference with a suffix)"
+                        } else {
+                            ""
+                        };
+                        bail!(
+                            "step '{}' references unknown step '${}'{hint}",
+                            step.id,
+                            name
+                        )
+                    }
+                }
+            }
+        }
+        deps[n] = seen;
+    }
+    let mut done = vec![false; steps.len()];
+    let mut order = Vec::with_capacity(steps.len());
+    while order.len() < steps.len() {
+        let mut progressed = false;
+        for n in 0..steps.len() {
+            if !done[n] && deps[n].iter().all(|m| done[*m]) {
+                done[n] = true;
+                order.push(n);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            let stuck: Vec<&str> = steps
+                .iter()
+                .enumerate()
+                .filter(|(n, _)| !done[*n])
+                .map(|(_, s)| s.id.as_str())
+                .collect();
+            bail!("circular reference involving: {}", stuck.join(", "));
+        }
+    }
+    Ok(order)
+}
+
+fn parse_recipe(text: &str) -> Result<(Vec<RecipeStep>, Option<String>)> {
+    let recipe: Recipe = serde_json::from_str(text)
+        .context("parse recipe JSON (expected {steps: [{id, args}], output?})")?;
+    if recipe.steps.is_empty() {
+        bail!("recipe has no steps");
+    }
+    let mut ids = std::collections::HashSet::new();
+    for step in &recipe.steps {
+        if !valid_step_id(&step.id) {
+            bail!(
+                "invalid step id '{}' (letters, digits, - and _ only)",
+                step.id
+            );
+        }
+        if !ids.insert(step.id.clone()) {
+            bail!("duplicate step id '{}'", step.id);
+        }
+        if step.args.is_empty() {
+            bail!("step '{}' has no args", step.id);
+        }
+        if step.args[0] == "pipeline" {
+            bail!("step '{}' nests a pipeline (not supported)", step.id);
+        }
+        if step.args[0] == "__record-tab" {
+            bail!("step '{}' calls an internal worker", step.id);
+        }
+        step_output(&step.id, &step.args)?;
+    }
+    Ok((recipe.steps, recipe.output))
+}
+
+pub fn pipeline(a: PipelineArgs) -> Result<()> {
+    let raw = if a.recipe.as_os_str() == "-" {
+        use std::io::Read as _;
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .context("read recipe from stdin")?;
+        text
+    } else {
+        std::fs::read_to_string(&a.recipe)
+            .with_context(|| format!("read {}", a.recipe.display()))?
+    };
+    let (steps, output_ref) = parse_recipe(&raw)?;
+    // Validate the whole DAG before running anything.
+    let order = sort_steps(&steps)?;
+    let final_id = match output_ref.as_deref() {
+        Some(reference) => {
+            let id = reference.strip_prefix('$').unwrap_or(reference);
+            if !steps.iter().any(|s| s.id == id) {
+                bail!("recipe output references unknown step '{reference}'");
+            }
+            id.to_string()
+        }
+        None => steps.last().map(|s| s.id.clone()).unwrap_or_default(),
+    };
+
+    let bin = std::env::current_exe().context("locate the aditor binary")?;
+    let mut outputs: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut report: Vec<serde_json::Value> = vec![];
+    for n in order {
+        let step = &steps[n];
+        let mut args: Vec<String> = step
+            .args
+            .iter()
+            .map(|a| substitute_refs(a, &outputs))
+            .collect();
+        // Re-resolve this step's own output after substitution (it may embed $refs).
+        let resolved_output = step_output(&step.id, &args)?;
+        if a.yes && !args.iter().any(|x| x == "--yes") {
+            args.push("--yes".to_string());
+        }
+        let cmd_str = super::shell_quote(&bin, &args);
+        if a.dry_run {
+            println!("{cmd_str}");
+            outputs.insert(step.id.clone(), resolved_output.clone());
+            report.push(serde_json::json!({
+                "id": step.id,
+                "command": cmd_str,
+                "output": resolved_output,
+            }));
+            continue;
+        }
+        // Step summaries print to stdout: capture them so pipeline --json stays
+        // parseable, while FFmpeg progress on stderr still streams live.
+        eprintln!("step {}/{} '{}'", report.len() + 1, steps.len(), step.id);
+        let child = std::process::Command::new(&bin)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .output()
+            .with_context(|| format!("execute {}", bin.display()))?;
+        if !child.status.success() {
+            eprintln!(
+                "step '{}' failed (status {}):\n{}",
+                step.id,
+                child.status,
+                String::from_utf8_lossy(&child.stdout)
+            );
+            bail!("step '{}' failed; pipeline stopped", step.id);
+        }
+        if !a.json {
+            println!("step '{}': ok → {}", step.id, resolved_output);
+        }
+        outputs.insert(step.id.clone(), resolved_output.clone());
+        report.push(serde_json::json!({
+            "id": step.id,
+            "command": cmd_str,
+            "output": resolved_output,
+        }));
+    }
+    let final_output = outputs.get(&final_id).cloned().unwrap_or_default();
+    if a.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "recipe": a.recipe.to_string_lossy(),
+                "steps": report,
+                "output": final_output,
+                "dry_run": a.dry_run,
+            }))?
+        );
+    } else if !a.dry_run {
+        println!("ok → {final_output}");
+    }
+    Ok(())
+}
+
 fn render(
     input: &Path,
     extra_inputs: &[&Path],
@@ -2918,6 +3282,104 @@ mod tests {
             "1"
         ])
         .is_err());
+    }
+    #[test]
+    fn pipeline_orders_detects_cycles_and_substitutes() {
+        assert!(valid_step_id("clip-1_x"));
+        assert!(!valid_step_id("has space"));
+        assert!(!valid_step_id("dollar$ign"));
+        assert_eq!(extract_refs("overlay $clip still.png"), ["clip"]);
+        assert_eq!(extract_refs("$a $a"), ["a"]);
+        assert_eq!(extract_refs("mix $x and $y-z"), ["x", "y-z"]);
+        assert_eq!(extract_refs("take ${clip} now"), ["clip"]);
+        assert!(extract_refs("cost $$5 and $$clip").is_empty());
+        assert_eq!(
+            step_output(
+                "s",
+                &[
+                    "cut".to_string(),
+                    "in.mp4".to_string(),
+                    "-o".to_string(),
+                    "out.mp4".to_string()
+                ]
+            )
+            .unwrap(),
+            "out.mp4"
+        );
+        assert_eq!(
+            step_output(
+                "s",
+                &[
+                    "frames".to_string(),
+                    "in.mp4".to_string(),
+                    "--dir=shots".to_string()
+                ]
+            )
+            .unwrap(),
+            "shots"
+        );
+        assert_eq!(
+            step_output(
+                "s",
+                &[
+                    "cut".to_string(),
+                    "in.mp4".to_string(),
+                    "-oout.mp4".to_string()
+                ]
+            )
+            .unwrap(),
+            "out.mp4"
+        );
+        assert!(step_output("s", &["info".to_string(), "in.mp4".to_string()]).is_err());
+        assert!(step_output(
+            "s",
+            &["cut".to_string(), "in.mp4".to_string(), "-o".to_string()]
+        )
+        .is_err());
+        let mut outputs = std::collections::HashMap::new();
+        outputs.insert("clip".to_string(), "clip.mp4".to_string());
+        assert_eq!(
+            substitute_refs("overlay $clip still.png", &outputs),
+            "overlay clip.mp4 still.png"
+        );
+        assert_eq!(
+            substitute_refs("${clip}-final.mp4", &outputs),
+            "clip.mp4-final.mp4"
+        );
+        assert_eq!(substitute_refs("cost $$5", &outputs), "cost $5");
+        let recipe = |steps: Vec<(&str, Vec<&str>)>| {
+            steps
+                .into_iter()
+                .map(|(id, args)| RecipeStep {
+                    id: id.to_string(),
+                    args: args.into_iter().map(str::to_string).collect(),
+                })
+                .collect::<Vec<_>>()
+        };
+        // Diamond: base feeds two branches feeding the final step.
+        let steps = recipe(vec![
+            ("final", vec!["overlay", "$left", "$top", "-o", "out.mp4"]),
+            ("left", vec!["cut", "in.mp4", "-o", "l.mp4"]),
+            ("top", vec!["cut", "$left", "-o", "t.mp4"]),
+        ]);
+        assert_eq!(sort_steps(&steps).unwrap(), [1, 2, 0]);
+        // Cycles (pair and self) and unknown ids fail before anything runs.
+        let cyclic = recipe(vec![
+            ("a", vec!["cut", "$b", "-o", "a.mp4"]),
+            ("b", vec!["cut", "$a", "-o", "b.mp4"]),
+        ]);
+        assert!(sort_steps(&cyclic).is_err());
+        let selfish = recipe(vec![("a", vec!["cut", "$a", "-o", "a.mp4"])]);
+        assert!(format!("{}", sort_steps(&selfish).unwrap_err()).contains("own output"));
+        let ghost = recipe(vec![("a", vec!["cut", "$ghost", "-o", "a.mp4"])]);
+        assert!(format!("{}", sort_steps(&ghost).unwrap_err()).contains("unknown step"));
+        assert!(parse_recipe("{\"steps\": []}").is_err());
+        assert!(
+            parse_recipe("{\"steps\": [{\"id\": \"a\", \"args\": [\"info\", \"x\"]}]}").is_err()
+        );
+        assert!(parse_recipe("not json").is_err());
+        assert!(Cli::try_parse_from(["aditor", "pipeline", "tour.json"]).is_ok());
+        assert!(Cli::try_parse_from(["aditor", "pipeline"]).is_err());
     }
     #[test]
     fn frame_rates_and_dimensions_are_sanitized() {

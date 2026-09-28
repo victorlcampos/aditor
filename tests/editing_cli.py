@@ -269,6 +269,34 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
     else:
         print('WARNING: no TTS engine found, skipping narrate checks')
     (root / 'bad.srt').write_text('1\n00:00:02,000 --> 00:00:01,000\nBackwards\n')
+    # Pipeline: chained steps with $refs run in dependency order.
+    chain = {
+        'steps': [
+            {'id': 'clip', 'args': ['cut', str(base), '--from', '0.5', '--duration', '1',
+                                    '--codec', 'h264-sw', '-o', str(root / 'chain-cut.mp4')]},
+            {'id': 'marked', 'args': ['overlay', '$clip', str(still), '--x', '0', '--y', '0',
+                                      '--codec', 'h264-sw', '-o', str(root / 'chain-ov.mp4')]},
+        ],
+        'output': '$marked',
+    }
+    recipe = root / 'chain.json'
+    recipe.write_text(json.dumps(chain))
+    result = json.loads(run(binary, 'pipeline', str(recipe), '--json'))
+    assert result['output'] == str(root / 'chain-ov.mp4')
+    assert [s['id'] for s in result['steps']] == ['clip', 'marked']
+    assert pixels(root / 'chain-ov.mp4', 5) != pixels(base, 5)
+    (root / 'cycle.json').write_text(json.dumps({'steps': [
+        {'id': 'a', 'args': ['cut', '$b', '--duration', '1', '-o', str(root / 'a.mp4')]},
+        {'id': 'b', 'args': ['cut', '$a', '--duration', '1', '-o', str(root / 'b.mp4')]},
+    ]}))
+    (root / 'ghost.json').write_text(json.dumps({'steps': [
+        {'id': 'a', 'args': ['cut', '$ghost', '--duration', '1', '-o', str(root / 'a.mp4')]},
+    ]}))
+    # Cyclic and dangling recipes fail BEFORE running anything.
+    for bad in ('cycle.json', 'ghost.json'):
+        result = subprocess.run([binary, 'pipeline', str(root / bad)], capture_output=True)
+        assert result.returncode != 0, bad
+    assert not (root / 'a.mp4').exists() and not (root / 'b.mp4').exists()
     for args in [
         ['crop', str(base), '--width', '999', '--height', '60'],
         ['crop', str(base), '--duration', '0'],
@@ -300,6 +328,7 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
         ['frames', str(base), '--count', '2', '--format', 'bmp'],
         ['frames', str(base), '--count', '2', '--from', '5'],
         ['frames', str(base), '--count', '4', '--dir', str(root / 'shots')],
+        ['pipeline', str(root / 'missing.json')],
         ['narrate', str(root / 'missing.srt')],
         ['narrate', str(subs), '--engine', 'flite'],
         ['narrate', str(subs), '-o', str(root / 'x.mp3')],

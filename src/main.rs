@@ -96,6 +96,8 @@ enum Cmd {
     Narrate(editing::NarrateArgs),
     /// Export evenly spaced still frames from a video
     Frames(editing::FramesArgs),
+    /// Run a recipe of dependent steps with a single final output
+    Pipeline(editing::PipelineArgs),
     /// Single pipeline: trimming, speed, and codec in one pass
     Edit(EditArgs),
     /// Re-encode with a different codec without changing the content
@@ -320,6 +322,7 @@ fn main() -> Result<()> {
         Cmd::Stroke(a) => editing::stroke(a),
         Cmd::Narrate(a) => editing::narrate(a),
         Cmd::Frames(a) => editing::frames(a),
+        Cmd::Pipeline(a) => editing::pipeline(a),
         Cmd::Edit(a) => cmd_edit(a),
         Cmd::Convert(a) => cmd_convert(a),
         Cmd::Record(a) => cmd_record(a),

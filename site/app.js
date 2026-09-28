@@ -71,6 +71,11 @@ const examples = {
     "description": "Export evenly spaced stills from the whole video or a slice: a fixed count or N frames per second.",
     "prerequisite": "Use --count or --fps (not both). Files land as frame-0001.png in the directory. Supports --dry-run and --yes."
   },
+  pipeline: {
+    "command": "aditor pipeline tour.json --json",
+    "description": "Run a whole recipe at once: steps reuse each other's outputs with $refs, circular recipes fail before running.",
+    "prerequisite": "Write {steps: [{id, args}], output?} as JSON. Every step declares -o/--output/--dir. Supports --dry-run and --yes."
+  },
   background: {
     command: 'aditor record --tab ABC123 \\\n  -o demo.mp4 --json\n\n# Later, use the returned recording ID:\naditor stop RECORDING_ID --json',
     description: 'Start recording in the background. Stop by session ID to finalize the MP4.',

@@ -257,6 +257,9 @@ aditor narrate tour.srt --video demo.mp4 --engine auto -o narrated.mp4
 # Export evenly spaced stills from the whole video or a slice.
 aditor frames demo.mp4 --count 5 --from 5 --to 10 --dir shots/ --json
 aditor frames demo.mp4 --fps 2 --dir thumbs/ --format jpg
+
+# Run a whole recipe at once: steps reuse outputs, one final file.
+aditor pipeline tour.json --json
 ```
 
 `crop` accepts the same time notation as `cut` and can also crop a pixel rectangle.
@@ -346,6 +349,17 @@ exactly one is required. `--from`/`--to`/`--duration` restrict to a slice
 (default: the whole video). Existing frames are refused without `--yes`, and
 `--json` lists every file. Exports beyond 100,000 files are refused.
 
+`pipeline RECIPE.json [--yes] [--dry-run] [--json]` runs a whole recipe at
+once: `{steps: [{id, args}], output?}` where each step's `args` is a full
+aditor argv, e.g. `["cut", "demo.mp4", "--from", "5", "-o", "clip.mp4"]`.
+Steps reference each other's declared outputs (`-o`/`--output`/`--dir`) with
+`$id` (or `${id}` before a suffix; `$$` escapes). Dependencies are inferred
+and topologically sorted; circular, self, and unknown references fail before
+anything runs. Steps execute sequentially through the current binary (every
+command works); `--yes` forwards to all steps, `--dry-run` prints the resolved
+commands, and `output: "$id"` (default: the last step) is the pipeline's
+single output.
+
 ## Validation
 
 ```sh
@@ -363,7 +377,7 @@ The editing integration test generates synthetic media and checks crop dimension
 insertion order and duration, audio/silence, timed text, side-by-side/stacked/
 picture-in-picture layouts, stopwatch/countdown timers, image overlays, pen
 strokes, synchronized narration (skipped without an OS TTS engine), still
-frames, dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
+frames, pipelines, dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
 `--font-file /path/to/font.ttf` to select one explicitly. `ADITOR_FFMPEG` can select
 a separate FFmpeg build for the CLI under test.
 

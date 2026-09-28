@@ -202,6 +202,29 @@ pub struct StrokeArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct NarrateArgs {
+    /// SRT subtitle file; each cue becomes one spoken line at its timestamp
+    input: PathBuf,
+    /// Video to mix the narration into (stream-copied); without it, write a WAV file
+    #[arg(long)]
+    video: Option<PathBuf>,
+    /// TTS engine: auto (say on macOS, sapi on Windows, espeak-ng on Linux) | say | espeak | sapi
+    #[arg(long, default_value = "auto")]
+    engine: String,
+    /// Engine voice (e.g. say: Luciana; espeak-ng: pt-br; sapi: Microsoft Maria Desktop)
+    #[arg(long)]
+    voice: Option<String>,
+    /// Speech rate (say/espeak: words per minute; sapi: -10 to 10)
+    #[arg(long)]
+    rate: Option<f64>,
+    /// Narration volume in the mix (0-2)
+    #[arg(long, default_value_t = 1.0)]
+    volume: f64,
+    #[command(flatten)]
+    out: OutOpts,
+}
+
+#[derive(Args, Debug)]
 pub struct WriteArgs {
     input: PathBuf,
     /// Literal UTF-8 text; FFmpeg text expansion is disabled
@@ -575,6 +598,15 @@ pub fn overlay(a: OverlayArgs) -> Result<()> {
     };
     let fps_s = fmt_sec(stream_fps(video(&base_meta)?));
     let still = is_still_image(&a.image);
+    // A video overlay shorter than the visibility window would vanish at EOF
+    // (the input plays from t=0 regardless of --from), so freeze its last
+    // frame up to the window end. Looped stills are already infinite.
+    let overlay_freeze = if still {
+        0.0
+    } else {
+        let overlay_dur = duration(&metadata(&a.image)?)?;
+        (visible_end - overlay_dur).max(0.0)
+    };
 
     let mut args: Vec<String> = vec!["-i".into(), a.input.to_string_lossy().into_owned()];
     if still {
@@ -594,6 +626,12 @@ pub fn overlay(a: OverlayArgs) -> Result<()> {
     if a.opacity < 1.0 {
         leg.push_str(&format!(",colorchannelmixer=aa={}", a.opacity));
     }
+    if overlay_freeze > COMBINE_EPS {
+        leg.push_str(&format!(
+            ",tpad=stop_mode=clone:stop_duration={}",
+            fmt_sec(overlay_freeze)
+        ));
+    }
     leg.push_str(",settb=AVTB[ov]");
     // -t caps the output at the base duration (the looped image is infinite).
     args.extend(
@@ -603,7 +641,7 @@ pub fn overlay(a: OverlayArgs) -> Result<()> {
                 format!("[0:v:0]scale=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1,fps={fps_s},format=yuv420p,settb=AVTB[base]"),
                 leg,
                 format!(
-                    "[base][ov]overlay=x={}:y={}:enable=between(t\\,{}\\,{}):eof_action=pass[vout]",
+                    "[base][ov]overlay=x={}:y={}:enable=between(t\\,{}\\,{}):eof_action=repeat[vout]",
                     filter_value(&a.x),
                     filter_value(&a.y),
                     fmt_sec(visible_start),
@@ -1589,6 +1627,598 @@ pub fn stroke(a: StrokeArgs) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// narrate: SRT subtitles to synchronized speech (cross-OS TTS)
+// ---------------------------------------------------------------------------
+
+/// One subtitle cue: speak `text` starting at `start`, fitting `end - start`.
+#[derive(Clone, Debug, PartialEq)]
+struct Cue {
+    start: f64,
+    end: f64,
+    text: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TtsEngine {
+    Say,
+    Espeak,
+    Sapi,
+}
+
+fn parse_srt_time(value: &str) -> Result<f64> {
+    let value = value.trim();
+    let parts: Vec<&str> = value.split(':').collect();
+    if parts.len() != 3 {
+        bail!("invalid timestamp: {value} (use HH:MM:SS,mmm)");
+    }
+    let h: f64 = parts[0]
+        .parse()
+        .with_context(|| format!("invalid timestamp: {value}"))?;
+    let m: f64 = parts[1]
+        .parse()
+        .with_context(|| format!("invalid timestamp: {value}"))?;
+    let (s, ms) = match parts[2].split_once([',', '.']) {
+        Some((s, ms)) => {
+            let scale = match ms.len() {
+                1 => 100.0,
+                2 => 10.0,
+                _ => 1.0,
+            };
+            let digits: f64 = ms[..ms.len().min(3)]
+                .parse()
+                .with_context(|| format!("invalid timestamp: {value}"))?;
+            let s: f64 = s
+                .parse()
+                .with_context(|| format!("invalid timestamp: {value}"))?;
+            (s, digits * scale / 1000.0)
+        }
+        None => (
+            parts[2]
+                .parse()
+                .with_context(|| format!("invalid timestamp: {value}"))?,
+            0.0,
+        ),
+    };
+    let total = h * 3600.0 + m * 60.0 + s + ms;
+    if !total.is_finite() || total < 0.0 || m >= 60.0 || s >= 60.0 {
+        bail!("invalid timestamp: {value} (use HH:MM:SS,mmm)");
+    }
+    Ok(total)
+}
+
+/// Strip `<tags>` and `{codes}` so engines speak words, not markup.
+fn strip_speech_tags(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut skip_tag = false;
+    let mut skip_brace = false;
+    for c in text.chars() {
+        if skip_tag {
+            if c == '>' {
+                skip_tag = false;
+            }
+            continue;
+        }
+        if skip_brace {
+            if c == '}' {
+                skip_brace = false;
+            }
+            continue;
+        }
+        if c == '<' {
+            skip_tag = true;
+            continue;
+        }
+        if c == '{' {
+            skip_brace = true;
+            continue;
+        }
+        out.push(c);
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn parse_srt(text: &str) -> Result<Vec<Cue>> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut cues = vec![];
+    for block in text.split("\n\n") {
+        let mut lines = block.lines().map(str::trim).filter(|l| !l.is_empty());
+        let first = match lines.next() {
+            Some(l) => l,
+            None => continue,
+        };
+        // Optional numeric index; otherwise the first line is the timing.
+        let timing = if first.parse::<u32>().is_ok() {
+            match lines.next() {
+                Some(l) => l,
+                None => continue,
+            }
+        } else {
+            first
+        };
+        let (start_raw, end_raw) = timing
+            .split_once("-->")
+            .context("subtitle block without timing (START --> END)")?;
+        let start_token = start_raw
+            .split_whitespace()
+            .next()
+            .context("empty cue start")?;
+        let end_token = end_raw.split_whitespace().next().context("empty cue end")?;
+        let (start, end) = (parse_srt_time(start_token)?, parse_srt_time(end_token)?);
+        if end <= start {
+            bail!("subtitle cue ends before it starts ({timing})");
+        }
+        let spoken = strip_speech_tags(&lines.collect::<Vec<_>>().join(" "));
+        if spoken.is_empty() {
+            continue;
+        }
+        cues.push(Cue {
+            start,
+            end,
+            text: spoken,
+        });
+    }
+    if cues.is_empty() {
+        bail!("no readable cues in the subtitle file");
+    }
+    Ok(cues)
+}
+
+/// Pick the engine without touching the filesystem (OS-dependent default).
+fn select_engine(requested: &str) -> Result<TtsEngine> {
+    match requested.trim().to_ascii_lowercase().as_str() {
+        "auto" => {
+            if cfg!(target_os = "macos") {
+                Ok(TtsEngine::Say)
+            } else if cfg!(target_os = "windows") {
+                Ok(TtsEngine::Sapi)
+            } else {
+                Ok(TtsEngine::Espeak)
+            }
+        }
+        "say" => Ok(TtsEngine::Say),
+        "espeak" | "espeak-ng" => Ok(TtsEngine::Espeak),
+        "sapi" => Ok(TtsEngine::Sapi),
+        other => bail!("unknown engine: {other} (auto|say|espeak|sapi)"),
+    }
+}
+
+fn engine_name(engine: TtsEngine) -> &'static str {
+    match engine {
+        TtsEngine::Say => "say",
+        TtsEngine::Espeak => "espeak",
+        TtsEngine::Sapi => "sapi",
+    }
+}
+
+/// Resolve the engine binary, with install hints per OS.
+fn engine_binary(engine: TtsEngine) -> Result<PathBuf> {
+    match engine {
+        TtsEngine::Say => which::which("say").context("`say` not found (macOS only)"),
+        TtsEngine::Espeak => which::which("espeak-ng").context(
+            "espeak-ng not found (Linux: `sudo apt install espeak-ng`, macOS: `brew install espeak`)",
+        ),
+        TtsEngine::Sapi => {
+            if !cfg!(target_os = "windows") {
+                bail!("the sapi engine needs Windows (use say on macOS, espeak-ng on Linux)");
+            }
+            which::which("powershell")
+                .or_else(|_| which::which("pwsh"))
+                .context("PowerShell not found")
+        }
+    }
+}
+
+fn format_rate(value: f64) -> String {
+    let text = format!("{value:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+fn say_args(text_file: &Path, out: &Path, voice: Option<&str>, rate: Option<f64>) -> Vec<String> {
+    let mut args = vec![
+        "-f".to_string(),
+        text_file.to_string_lossy().to_string(),
+        "-o".to_string(),
+        out.to_string_lossy().to_string(),
+    ];
+    if let Some(voice) = voice {
+        args.extend(["-v".to_string(), voice.to_string()]);
+    }
+    if let Some(rate) = rate {
+        args.extend(["-r".to_string(), format_rate(rate)]);
+    }
+    args
+}
+
+fn espeak_args(
+    text_file: &Path,
+    out: &Path,
+    voice: Option<&str>,
+    rate: Option<f64>,
+) -> Vec<String> {
+    let mut args = vec!["-w".to_string(), out.to_string_lossy().to_string()];
+    if let Some(voice) = voice {
+        args.extend(["-v".to_string(), voice.to_string()]);
+    }
+    if let Some(rate) = rate {
+        args.extend(["-s".to_string(), format_rate(rate)]);
+    }
+    args.extend(["-f".to_string(), text_file.to_string_lossy().to_string()]);
+    args
+}
+
+/// PowerShell script speaking a text file to WAV via System.Speech (SAPI).
+fn sapi_script() -> String {
+    [
+        "param([string]$TextFile, [string]$Out, [string]$Voice, [int]$Rate)",
+        "Add-Type -AssemblyName System.Speech",
+        "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+        "if ($Voice) { try { $synth.SelectVoice($Voice) } catch { Write-Error \"voice not found: $Voice\"; exit 1 } }",
+        "$synth.Rate = $Rate",
+        "$synth.SetOutputToWaveFile($Out)",
+        "$text = Get-Content -Raw -Encoding UTF8 $TextFile",
+        "$synth.Speak($text) | Out-Null",
+        "$synth.Dispose()",
+        "",
+    ]
+    .join("\r\n")
+}
+
+fn audio_duration(path: &Path) -> Result<f64> {
+    let meta = probe(&resolve_ffprobe()?, path)?;
+    meta["format"]["duration"]
+        .as_str()
+        .context("audio has no known duration")?
+        .parse::<f64>()
+        .context("audio has no known duration")
+}
+
+/// Stretch factor to fit `dur` seconds of speech into `window` seconds.
+/// None when it already fits (silence fills the gap).
+fn cue_stretch(dur: f64, window: f64) -> Option<f64> {
+    if dur > window + 0.01 {
+        Some(dur / window)
+    } else {
+        None
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn synthesize_cue(
+    engine: TtsEngine,
+    bin: &Path,
+    text: &str,
+    out: &Path,
+    voice: Option<&str>,
+    rate: Option<f64>,
+    dir: &Path,
+    index: usize,
+) -> Result<()> {
+    let text_file = dir.join(format!("cue{index}.txt"));
+    std::fs::write(&text_file, text).with_context(|| format!("write {}", text_file.display()))?;
+    let (bin, args) = match engine {
+        TtsEngine::Say => (bin.to_path_buf(), say_args(&text_file, out, voice, rate)),
+        TtsEngine::Espeak => (bin.to_path_buf(), espeak_args(&text_file, out, voice, rate)),
+        TtsEngine::Sapi => {
+            let script = dir.join("speak.ps1");
+            std::fs::write(&script, sapi_script())
+                .with_context(|| format!("write {}", script.display()))?;
+            let mut args = vec![
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                script.to_string_lossy().to_string(),
+                "-TextFile".to_string(),
+                text_file.to_string_lossy().to_string(),
+                "-Out".to_string(),
+                out.to_string_lossy().to_string(),
+                "-Rate".to_string(),
+                (rate.unwrap_or(0.0) as i64).to_string(),
+            ];
+            if let Some(voice) = voice {
+                args.extend(["-Voice".to_string(), voice.to_string()]);
+            }
+            (bin.to_path_buf(), args)
+        }
+    };
+    let output = std::process::Command::new(&bin)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .with_context(|| format!("execute {}", bin.display()))?;
+    if !output.status.success() || !out.exists() {
+        let tail = String::from_utf8_lossy(&output.stderr);
+        let tail: Vec<&str> = tail.lines().collect();
+        let from = tail.len().saturating_sub(5);
+        bail!(
+            "speech synthesis failed (cue {}):\n{}",
+            index + 1,
+            tail[from..].join("\n")
+        );
+    }
+    Ok(())
+}
+
+pub fn narrate(a: NarrateArgs) -> Result<()> {
+    if !a.input.is_file() {
+        bail!("subtitle file does not exist: {}", a.input.display());
+    }
+    let cues = parse_srt(
+        &std::fs::read_to_string(&a.input)
+            .with_context(|| format!("read {}", a.input.display()))?,
+    )?;
+    let engine = select_engine(&a.engine)?;
+    if !(0.0..=2.0).contains(&a.volume) || !a.volume.is_finite() {
+        bail!("--volume must be between 0 and 2");
+    }
+    if let Some(rate) = a.rate {
+        match engine {
+            TtsEngine::Sapi => {
+                if !rate.is_finite() || !(-10.0..=10.0).contains(&rate) {
+                    bail!("sapi --rate must be between -10 and 10");
+                }
+            }
+            TtsEngine::Say | TtsEngine::Espeak => {
+                if !rate.is_finite() || rate <= 0.0 {
+                    bail!("--rate must be positive (words per minute)");
+                }
+            }
+        }
+    }
+    let total = cues.iter().map(|c| c.end).fold(0.0_f64, f64::max);
+    let wants_video = a.video.is_some();
+    if wants_video {
+        match a
+            .out
+            .output
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("mp4") | Some("mov") | Some("mkv") | None => {}
+            Some(other) => bail!("video narration requires .mp4/.mov/.mkv output (got .{other})"),
+        }
+    } else if !matches!(
+        a.out
+            .output
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
+        Some("wav") | None
+    ) {
+        bail!("audio-only narration requires .wav output (or pass --video for .mp4)");
+    }
+    let output = a.out.output.clone().unwrap_or_else(|| {
+        if wants_video {
+            PathBuf::from("narrated.mp4")
+        } else {
+            PathBuf::from("narration.wav")
+        }
+    });
+    if output.exists() && !a.out.yes && !a.out.dry_run {
+        bail!(
+            "output already exists (use --yes to overwrite): {}",
+            output.display()
+        );
+    }
+    if output.exists() {
+        if let Ok(canonical) = output.canonicalize() {
+            for source in [&a.input].into_iter().chain(a.video.as_ref()) {
+                if source.canonicalize()? == canonical {
+                    bail!("output must not overwrite an input file");
+                }
+            }
+        }
+    }
+
+    let ffmpeg = resolve_ffmpeg()?;
+    let mut inputs: Vec<String> = vec![];
+    // (video duration, video has audio) when mixing into a video.
+    let mut video_track: Option<(f64, bool)> = None;
+    if wants_video {
+        let video = a.video.clone().unwrap_or_default();
+        let meta = metadata(&video)?;
+        video_track = Some((duration(&meta)?, audio(&meta)));
+        inputs.extend(["-i".into(), video.to_string_lossy().into_owned()]);
+    }
+    // Input index of the first cue file (after the optional video input).
+    let first_cue = inputs.len() / 2;
+
+    // Synthesize every cue up front: stretching needs real durations.
+    // Dry runs skip synthesis and show unstretched legs instead.
+    let dir;
+    let mut cue_files: Vec<(PathBuf, f64, f64)> = vec![];
+    if !a.out.dry_run {
+        let bin = engine_binary(engine)?;
+        dir = tempfile::tempdir().context("create temporary directory")?;
+        for (n, cue) in cues.iter().enumerate() {
+            let out = dir.path().join(format!("cue{n}.wav"));
+            // Engines write their own container; FFmpeg normalizes below.
+            let out = match engine {
+                TtsEngine::Say => out.with_extension("aiff"),
+                TtsEngine::Espeak | TtsEngine::Sapi => out,
+            };
+            eprintln!(
+                "synthesizing cue {}/{} ({}s)",
+                n + 1,
+                cues.len(),
+                cue.text.chars().count()
+            );
+            synthesize_cue(
+                engine,
+                &bin,
+                &cue.text,
+                &out,
+                a.voice.as_deref(),
+                a.rate,
+                dir.path(),
+                n,
+            )?;
+            let dur = audio_duration(&out)?;
+            if dur <= 0.0 {
+                bail!("speech synthesis produced no audio (cue {})", n + 1);
+            }
+            cue_files.push((out, dur, cue.end - cue.start));
+            inputs.extend(["-i".into(), cue_files[n].0.to_string_lossy().into_owned()]);
+        }
+    }
+
+    let mut legs: Vec<String> = vec![];
+    let mut mixed = String::new();
+    for (n, cue) in cues.iter().enumerate() {
+        let window = cue.end - cue.start;
+        let stretch = if a.out.dry_run {
+            None
+        } else {
+            cue_stretch(cue_files[n].1, window)
+        };
+        let mut leg = format!(
+            "[{}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo",
+            first_cue + n
+        );
+        if let Some(factor) = stretch {
+            if factor > 3.0 {
+                eprintln!(
+                    "warning: cue {} speaks {:.1}s into a {:.1}s window ({:.1}x); consider shorter text",
+                    n + 1,
+                    cue_files[n].1,
+                    window,
+                    factor
+                );
+            }
+            leg.push_str(&format!(",{}", super::atempo_chain(factor)));
+        }
+        leg.push_str(&format!(
+            ",apad=whole_dur={},atrim=0:{},adelay={}|{}[c{n}]",
+            fmt_sec(window),
+            fmt_sec(window),
+            (cue.start * 1000.0).round() as u64,
+            (cue.start * 1000.0).round() as u64
+        ));
+        legs.push(leg);
+        mixed.push_str(&format!("[c{n}]"));
+    }
+    legs.push(format!(
+        "{mixed}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0,atrim=0:{}[narr]",
+        cues.len(),
+        fmt_sec(total)
+    ));
+    let mut audio_out = "[narr]".to_string();
+    if (a.volume - 1.0).abs() > f64::EPSILON {
+        legs.push(format!("[narr]volume={}[narrv]", a.volume));
+        audio_out = "[narrv]".to_string();
+    }
+
+    let mut args: Vec<String> = vec!["-hide_banner".into()];
+    args.push(if a.out.yes { "-y".into() } else { "-n".into() });
+    args.extend(inputs);
+    // Finalize the narration label: trim to the video length when mixing.
+    let mut filters = legs;
+    let final_audio: String;
+    if let Some((video_dur, video_audio)) = video_track {
+        filters.push(format!("{audio_out}atrim=0:{}[nmix]", fmt_sec(video_dur)));
+        if video_audio {
+            filters.push(
+                "[0:a:0][nmix]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[aout]"
+                    .to_string(),
+            );
+            final_audio = "[aout]".to_string();
+        } else {
+            final_audio = "[nmix]".to_string();
+        }
+    } else {
+        final_audio = audio_out;
+    }
+    args.extend(["-filter_complex".into(), filters.join(";")]);
+    if wants_video {
+        args.extend(["-map".into(), "0:v:0".into(), "-map".into(), final_audio]);
+        args.extend(
+            [
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "160k",
+                "-movflags",
+                "+faststart",
+            ]
+            .map(String::from),
+        );
+    } else {
+        args.extend(["-map".into(), final_audio]);
+        args.extend(["-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"].map(String::from));
+    }
+    args.push(output.to_string_lossy().to_string());
+    let cmd_str = shell_quote(&ffmpeg, &args);
+    if a.out.dry_run {
+        if a.out.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "input": a.input.to_string_lossy(),
+                    "video": a.video.as_ref().map(|p| p.to_string_lossy()),
+                    "engine": engine_name(engine),
+                    "voice": a.voice,
+                    "rate": a.rate,
+                    "cues": cues.len(),
+                    "duration": total,
+                    "volume": a.volume,
+                    "output": output.to_string_lossy(),
+                    "ffmpeg_cmd": cmd_str,
+                    "dry_run": true,
+                }))?
+            );
+        } else {
+            println!("{cmd_str}");
+        }
+        return Ok(());
+    }
+
+    eprintln!("mixing narration: {cmd_str}");
+    let status = std::process::Command::new(&ffmpeg)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .status()
+        .with_context(|| format!("execute {}", ffmpeg.display()))?;
+    if !status.success() {
+        bail!("ffmpeg failed (status {status})");
+    }
+    if !output.exists() {
+        bail!(
+            "ffmpeg exited successfully but the output was not found: {}",
+            output.display()
+        );
+    }
+    if a.out.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "input": a.input.to_string_lossy(),
+                "video": a.video.as_ref().map(|p| p.to_string_lossy()),
+                "engine": engine_name(engine),
+                "voice": a.voice,
+                "rate": a.rate,
+                "cues": cues.len(),
+                "duration": total,
+                "volume": a.volume,
+                "output": output.to_string_lossy(),
+                "ffmpeg_cmd": cmd_str,
+                "dry_run": false,
+            }))?
+        );
+    } else {
+        println!("ok → {}", output.display());
+    }
+    Ok(())
+}
+
 fn render(
     input: &Path,
     extra_inputs: &[&Path],
@@ -1926,6 +2556,80 @@ mod tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["aditor", "stroke", "--fps", "abc"]).is_err());
+    }
+    #[test]
+    fn narrate_parses_srt_speech_timings_and_engines() {
+        assert!((parse_srt_time("00:00:01,000").unwrap() - 1.0).abs() < 1e-9);
+        assert!((parse_srt_time("01:02:03.500").unwrap() - 3723.5).abs() < 1e-9);
+        assert!((parse_srt_time("00:10:00,05").unwrap() - 600.05).abs() < 1e-9);
+        for bad in [
+            "1,000",
+            "00:00:61,000",
+            "00:61:00,000",
+            "nan",
+            "00:00:-1,000",
+        ] {
+            assert!(parse_srt_time(bad).is_err(), "{bad}");
+        }
+        assert_eq!(
+            strip_speech_tags("Say <i>this</i> {\\an8}  loudly"),
+            "Say this loudly"
+        );
+        let cues = parse_srt(
+            "\u{feff}1\n00:00:01,000 --> 00:00:04,000\nHello <b>world</b>\nsecond line\n\n2\n00:00:05.500 --> 00:00:06.000\nBye\n",
+        )
+        .unwrap();
+        assert_eq!(cues.len(), 2);
+        assert_eq!(cues[0].start, 1.0);
+        assert_eq!(cues[0].end, 4.0);
+        assert_eq!(cues[0].text, "Hello world second line");
+        assert_eq!(cues[1].start, 5.5);
+        for bad in [
+            "",
+            "1\nno timing here\n",
+            "1\n00:00:05,000 --> 00:00:04,000\nBackwards\n",
+            "1\n00:00:01,000 --> 00:00:02,000\n   \n",
+        ] {
+            assert!(parse_srt(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(cue_stretch(2.0, 5.0), None);
+        assert_eq!(cue_stretch(5.0, 5.0), None);
+        assert!((cue_stretch(6.0, 4.0).unwrap() - 1.5).abs() < 1e-9);
+        assert!(select_engine("auto").is_ok());
+        assert!(select_engine("SAY").is_ok());
+        assert!(select_engine("espeak-ng").is_ok());
+        assert!(select_engine("sapi").is_ok());
+        assert!(select_engine("flite").is_err());
+        let dir = PathBuf::from("/tmp");
+        let say = say_args(
+            &dir.join("t.txt"),
+            &dir.join("o.aiff"),
+            Some("Luciana"),
+            Some(175.0),
+        );
+        assert_eq!(
+            say,
+            [
+                "-f",
+                "/tmp/t.txt",
+                "-o",
+                "/tmp/o.aiff",
+                "-v",
+                "Luciana",
+                "-r",
+                "175"
+            ]
+        );
+        let esp = espeak_args(&dir.join("t.txt"), &dir.join("o.wav"), None, None);
+        assert_eq!(esp, ["-w", "/tmp/o.wav", "-f", "/tmp/t.txt"]);
+        let script = sapi_script();
+        assert!(script.contains("SetOutputToWaveFile") && script.contains("SelectVoice"));
+        assert!(Cli::try_parse_from(["aditor", "narrate", "subs.srt"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "aditor", "narrate", "subs.srt", "--video", "in.mp4", "--engine", "say"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["aditor", "narrate"]).is_err());
     }
     #[test]
     fn frame_rates_and_dimensions_are_sanitized() {

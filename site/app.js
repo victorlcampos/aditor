@@ -61,6 +61,11 @@ const examples = {
     "description": "Render a pen-drawing animation (ring, underline, arrow, or box) as a transparent video, ready to burn in with overlay.",
     "prerequisite": "Pick any color name or hex with optional @opacity, any canvas size and brush thickness. Supports --dry-run and --yes."
   },
+  narrate: {
+    "command": "aditor narrate tour.srt \\\n  --video demo.mp4 --voice Luciana \\\n  -o narrated.mp4 --json",
+    "description": "Speak each subtitle cue at its timestamp with the OS text-to-speech engine, mixed over the original audio.",
+    "prerequisite": "Uses say on macOS, SAPI on Windows, espeak-ng on Linux. Omit --video for a WAV file. Supports --dry-run and --yes."
+  },
   background: {
     command: 'aditor record --tab ABC123 \\\n  -o demo.mp4 --json\n\n# Later, use the returned recording ID:\naditor stop RECORDING_ID --json',
     description: 'Start recording in the background. Stop by session ID to finalize the MP4.',

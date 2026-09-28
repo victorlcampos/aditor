@@ -94,6 +94,8 @@ enum Cmd {
     Stroke(editing::StrokeArgs),
     /// Speak SRT subtitles with synchronized OS text-to-speech
     Narrate(editing::NarrateArgs),
+    /// Export evenly spaced still frames from a video
+    Frames(editing::FramesArgs),
     /// Single pipeline: trimming, speed, and codec in one pass
     Edit(EditArgs),
     /// Re-encode with a different codec without changing the content
@@ -317,6 +319,7 @@ fn main() -> Result<()> {
         Cmd::Overlay(a) => editing::overlay(a),
         Cmd::Stroke(a) => editing::stroke(a),
         Cmd::Narrate(a) => editing::narrate(a),
+        Cmd::Frames(a) => editing::frames(a),
         Cmd::Edit(a) => cmd_edit(a),
         Cmd::Convert(a) => cmd_convert(a),
         Cmd::Record(a) => cmd_record(a),

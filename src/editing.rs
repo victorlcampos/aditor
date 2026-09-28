@@ -225,6 +225,41 @@ pub struct NarrateArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct FramesArgs {
+    input: PathBuf,
+    /// Export this many frames, evenly spaced across the interval
+    #[arg(long)]
+    count: Option<u32>,
+    /// Export this many frames per second (mutually exclusive with --count)
+    #[arg(long)]
+    fps: Option<f64>,
+    /// Start of the slice: seconds or HH:MM:SS.mmm (default: video start)
+    #[arg(long)]
+    from: Option<String>,
+    /// End of the slice, exclusive (mutually exclusive with --duration)
+    #[arg(long, conflicts_with = "duration")]
+    to: Option<String>,
+    /// Slice duration starting at --from
+    #[arg(long)]
+    duration: Option<String>,
+    /// Output directory (default: <input-stem>-frames/ beside the input)
+    #[arg(long)]
+    dir: Option<PathBuf>,
+    /// Image format: png | jpg
+    #[arg(long, default_value = "png")]
+    format: String,
+    /// Overwrite without prompting (otherwise, refuse if frames exist)
+    #[arg(long, default_value_t = false)]
+    yes: bool,
+    /// Show the FFmpeg command without writing any files
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+    /// Print a JSON summary (for agents) instead of plain text
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct WriteArgs {
     input: PathBuf,
     /// Literal UTF-8 text; FFmpeg text expansion is disabled
@@ -2219,6 +2254,215 @@ pub fn narrate(a: NarrateArgs) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// frames: export evenly spaced stills for inspection and storyboards
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum FramesMode {
+    Count(u32),
+    Fps(f64),
+}
+
+/// Refuse absurd exports before writing thousands of files.
+const MAX_FRAMES: u64 = 100_000;
+
+fn parse_frames_mode(count: Option<u32>, fps: Option<f64>) -> Result<FramesMode> {
+    match (count, fps) {
+        (Some(n), None) => {
+            if n == 0 {
+                bail!("--count must be at least 1");
+            }
+            Ok(FramesMode::Count(n))
+        }
+        (None, Some(f)) => {
+            if !f.is_finite() || f <= 0.0 {
+                bail!("--fps must be greater than zero");
+            }
+            Ok(FramesMode::Fps(f))
+        }
+        (Some(_), Some(_)) => bail!("use --count OR --fps, not both"),
+        (None, None) => bail!("pass --count N or --fps N"),
+    }
+}
+
+fn parse_image_format(value: &str) -> Result<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "png" => Ok("png"),
+        "jpg" | "jpeg" => Ok("jpg"),
+        other => bail!("unknown format: {other} (png|jpg)"),
+    }
+}
+
+fn expected_frames(mode: FramesMode, duration: f64) -> u64 {
+    match mode {
+        FramesMode::Count(n) => u64::from(n),
+        FramesMode::Fps(f) => ((duration * f).ceil() as u64).max(1),
+    }
+}
+
+fn default_frames_dir(input: &Path) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "frames".into());
+    let name = format!("{stem}-frames");
+    input
+        .parent()
+        .map(|p| p.join(&name))
+        .unwrap_or_else(|| PathBuf::from(&name))
+}
+
+fn format_frame_rate(value: f64) -> String {
+    let text = format!("{value:.6}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+pub fn frames(a: FramesArgs) -> Result<()> {
+    let meta = metadata(&a.input)?;
+    let total = duration(&meta)?;
+    let mode = parse_frames_mode(a.count, a.fps)?;
+    let ext = parse_image_format(&a.format)?;
+    let timed = a.from.is_some() || a.to.is_some() || a.duration.is_some();
+    let (start, end) = if timed {
+        window(
+            a.from.as_deref(),
+            a.to.as_deref(),
+            a.duration.as_deref(),
+            total,
+        )?
+    } else {
+        (0.0, total)
+    };
+    let slice = end - start;
+    let expected = expected_frames(mode, slice);
+    if expected > MAX_FRAMES {
+        bail!("refusing to export {expected} frames (limit {MAX_FRAMES})");
+    }
+    let rate = match mode {
+        FramesMode::Count(n) => f64::from(n) / slice,
+        FramesMode::Fps(f) => f,
+    };
+    let mode_name = match mode {
+        FramesMode::Count(_) => "count",
+        FramesMode::Fps(_) => "fps",
+    };
+    let dir = a
+        .dir
+        .clone()
+        .unwrap_or_else(|| default_frames_dir(&a.input));
+    let digits = (expected.max(1).to_string().len()).max(4);
+    let pattern_name = format!("frame-%0{digits}d.{ext}");
+
+    if !a.dry_run {
+        std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+        if !a.yes {
+            let clash = std::fs::read_dir(&dir)
+                .with_context(|| format!("read {}", dir.display()))?
+                .flatten()
+                .filter_map(|e| e.file_name().into_string().ok())
+                .any(|n| n.starts_with("frame-") && n.ends_with(&format!(".{ext}")));
+            if clash {
+                bail!(
+                    "frames already exist in {} (use --yes to overwrite)",
+                    dir.display()
+                );
+            }
+        }
+    }
+    let dir_abs = if a.dry_run {
+        dir.clone()
+    } else {
+        dir.canonicalize()
+            .with_context(|| format!("canonicalize {}", dir.display()))?
+    };
+    let pattern = dir_abs.join(&pattern_name);
+
+    let ffmpeg = resolve_ffmpeg()?;
+    let mut args: Vec<String> = vec!["-hide_banner".into()];
+    args.push(if a.yes { "-y".into() } else { "-n".into() });
+    if timed {
+        args.push("-ss".into());
+        args.push(fmt_sec(start));
+        args.push("-t".into());
+        args.push(fmt_sec(slice));
+    }
+    args.push("-i".into());
+    args.push(a.input.to_string_lossy().to_string());
+    args.extend(["-vf".into(), format!("fps={}", format_frame_rate(rate))]);
+    args.push(pattern.to_string_lossy().to_string());
+    let cmd_str = shell_quote(&ffmpeg, &args);
+    if a.dry_run {
+        if a.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "input": a.input.to_string_lossy(),
+                    "dir": dir.to_string_lossy(),
+                    "format": ext,
+                    "mode": mode_name,
+                    "rate": rate,
+                    "from": start,
+                    "duration": slice,
+                    "expected": expected,
+                    "files": [],
+                    "ffmpeg_cmd": cmd_str,
+                    "dry_run": true,
+                }))?
+            );
+        } else {
+            println!("{cmd_str}");
+        }
+        return Ok(());
+    }
+
+    eprintln!("exporting {expected} frames: {cmd_str}");
+    let status = std::process::Command::new(&ffmpeg)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .status()
+        .with_context(|| format!("execute {}", ffmpeg.display()))?;
+    if !status.success() {
+        bail!("ffmpeg failed (status {status})");
+    }
+    let mut files: Vec<String> = std::fs::read_dir(&dir_abs)
+        .with_context(|| format!("read {}", dir_abs.display()))?
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.starts_with("frame-") && n.ends_with(&format!(".{ext}")))
+        .map(|n| dir_abs.join(n).to_string_lossy().to_string())
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        bail!(
+            "ffmpeg exited successfully but wrote no frames to {}",
+            dir_abs.display()
+        );
+    }
+    if a.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "input": a.input.to_string_lossy(),
+                "dir": dir_abs.to_string_lossy(),
+                "format": ext,
+                "mode": mode_name,
+                "rate": rate,
+                "from": start,
+                "duration": slice,
+                "expected": expected,
+                "count": files.len(),
+                "files": files,
+                "ffmpeg_cmd": cmd_str,
+                "dry_run": false,
+            }))?
+        );
+    } else {
+        println!("ok → {} ({} files)", dir_abs.display(), files.len());
+    }
+    Ok(())
+}
+
 fn render(
     input: &Path,
     extra_inputs: &[&Path],
@@ -2630,6 +2874,50 @@ mod tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from(["aditor", "narrate"]).is_err());
+    }
+    #[test]
+    fn frames_modes_intervals_and_cli_parse() {
+        assert!(parse_frames_mode(Some(5), None).is_ok());
+        assert!(parse_frames_mode(None, Some(2.5)).is_ok());
+        for (count, fps) in [(Some(0), None), (None, Some(0.0)), (None, Some(-1.0))] {
+            assert!(parse_frames_mode(count, fps).is_err());
+        }
+        assert!(parse_frames_mode(Some(1), Some(1.0)).is_err());
+        assert!(parse_frames_mode(None, None).is_err());
+        assert_eq!(parse_image_format("PNG").unwrap(), "png");
+        assert_eq!(parse_image_format("jpeg").unwrap(), "jpg");
+        assert!(parse_image_format("bmp").is_err());
+        assert_eq!(expected_frames(FramesMode::Count(5), 5.0), 5);
+        assert_eq!(expected_frames(FramesMode::Fps(5.0), 1.0), 5);
+        assert_eq!(format_frame_rate(2.0), "2");
+        assert_eq!(format_frame_rate(1.5), "1.5");
+        assert_eq!(
+            default_frames_dir(Path::new("vid/demo.mp4")),
+            PathBuf::from("vid/demo-frames")
+        );
+        assert!(Cli::try_parse_from(["aditor", "frames", "in.mp4", "--count", "5"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "aditor", "frames", "in.mp4", "--fps", "2", "--from", "5", "--to", "10"
+        ])
+        .is_ok());
+        // Mode exclusivity is validated at runtime (see parse_frames_mode).
+        assert!(Cli::try_parse_from(["aditor", "frames", "in.mp4"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["aditor", "frames", "in.mp4", "--count", "5", "--fps", "2"])
+                .is_ok()
+        );
+        assert!(Cli::try_parse_from([
+            "aditor",
+            "frames",
+            "in.mp4",
+            "--count",
+            "5",
+            "--to",
+            "1",
+            "--duration",
+            "1"
+        ])
+        .is_err());
     }
     #[test]
     fn frame_rates_and_dimensions_are_sanitized() {

@@ -211,6 +211,26 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
     result = json.loads(run(binary, 'stroke', '--shape', 'box',
                            '--dry-run', '--json', '-o', str(dry_stroke)))
     assert result['dry_run'] and not dry_stroke.exists()
+    # Frames: evenly spaced stills from the whole video or a slice.
+    def frames(*args, name='shots'):
+        output = root / name
+        result = json.loads(run(binary, 'frames', str(base), *map(str, args),
+                                '--dir', str(output), '--json'))
+        assert result['dir'] == str(output.resolve())
+        return output, result
+
+    out, summary = frames('--count', 4)
+    assert summary['count'] == 4 and len(summary['files']) == 4
+    shot = probe(summary['files'][0])
+    assert (shot['streams'][0]['width'], shot['streams'][0]['height']) == (160, 120)
+    out, summary = frames('--fps', 5, '--from', 0.5, '--to', 1.5, name='sliced')
+    assert summary['count'] == 5 and summary['from'] == 0.5
+    out, summary = frames('--count', 2, '--format', 'jpg', name='thumbs')
+    assert all(p.endswith('.jpg') for p in summary['files'])
+    dry_shots = root / 'dry-shots'
+    result = json.loads(run(binary, 'frames', str(base), '--fps', '2',
+                           '--dry-run', '--json', '--dir', str(dry_shots)))
+    assert result['dry_run'] and not dry_shots.exists()
     # Narrate: SRT to synchronized speech (needs an OS TTS engine).
     import os as _os
     import shutil as _shutil
@@ -273,6 +293,13 @@ with tempfile.TemporaryDirectory(prefix='aditor-edit-test-') as directory:
         ['stroke', '--width', '0'],
         ['stroke', '--draw-duration', '0', '--hold-duration', '0'],
         ['stroke', '--line-width', '100', '--width', '160', '--height', '160'],
+        ['frames', str(base)],
+        ['frames', str(base), '--count', '2', '--fps', '2'],
+        ['frames', str(base), '--count', '0'],
+        ['frames', str(base), '--fps', '0'],
+        ['frames', str(base), '--count', '2', '--format', 'bmp'],
+        ['frames', str(base), '--count', '2', '--from', '5'],
+        ['frames', str(base), '--count', '4', '--dir', str(root / 'shots')],
         ['narrate', str(root / 'missing.srt')],
         ['narrate', str(subs), '--engine', 'flite'],
         ['narrate', str(subs), '-o', str(root / 'x.mp3')],

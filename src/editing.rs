@@ -2851,21 +2851,21 @@ mod tests {
             Some("Luciana"),
             Some(175.0),
         );
-        assert_eq!(
-            say,
-            [
-                "-f",
-                "/tmp/t.txt",
-                "-o",
-                "/tmp/o.aiff",
-                "-v",
-                "Luciana",
-                "-r",
-                "175"
-            ]
-        );
+        // Join-built expectations: separators differ per OS (notably Windows).
+        let txt = dir.join("t.txt").to_string_lossy().to_string();
+        let aiff = dir.join("o.aiff").to_string_lossy().to_string();
+        let wav = dir.join("o.wav").to_string_lossy().to_string();
+        let expected: Vec<String> = ["-f", &txt, "-o", &aiff, "-v", "Luciana", "-r", "175"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(say, expected);
         let esp = espeak_args(&dir.join("t.txt"), &dir.join("o.wav"), None, None);
-        assert_eq!(esp, ["-w", "/tmp/o.wav", "-f", "/tmp/t.txt"]);
+        let expected: Vec<String> = ["-w", &wav, "-f", &txt]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(esp, expected);
         let script = sapi_script();
         assert!(script.contains("SetOutputToWaveFile") && script.contains("SelectVoice"));
         assert!(Cli::try_parse_from(["aditor", "narrate", "subs.srt"]).is_ok());

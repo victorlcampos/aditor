@@ -253,6 +253,10 @@ aditor stroke --shape ring --color '#ff7900' --width 400 --height 400 \
 # Speak subtitles with synchronized text-to-speech.
 aditor narrate tour.srt --voice Luciana -o narration.wav --json
 aditor narrate tour.srt --video demo.mp4 --engine auto -o narrated.mp4
+
+# Export evenly spaced stills from the whole video or a slice.
+aditor frames demo.mp4 --count 5 --from 5 --to 10 --dir shots/ --json
+aditor frames demo.mp4 --fps 2 --dir thumbs/ --format jpg
 ```
 
 `crop` accepts the same time notation as `cut` and can also crop a pixel rectangle.
@@ -334,6 +338,14 @@ writes a 48 kHz stereo WAV; with it, mixes the narration over the original
 audio (video stream-copied) trimmed to the video length. Supports `--json`,
 `--dry-run`, and `--yes`.
 
+`frames INPUT (--count N | --fps N) [--from/--to/--duration] [--dir DIR]
+[--format png|jpg]` exports still frames as `frame-0001.png` (or `.jpg`) into
+`--dir` (default `<input-stem>-frames/` beside the input). `--count N` spreads
+N frames evenly across the interval; `--fps N` exports N frames per second;
+exactly one is required. `--from`/`--to`/`--duration` restrict to a slice
+(default: the whole video). Existing frames are refused without `--yes`, and
+`--json` lists every file. Exports beyond 100,000 files are refused.
+
 ## Validation
 
 ```sh
@@ -350,8 +362,8 @@ python3 tests/browser_cli.py \
 The editing integration test generates synthetic media and checks crop dimensions,
 insertion order and duration, audio/silence, timed text, side-by-side/stacked/
 picture-in-picture layouts, stopwatch/countdown timers, image overlays, pen
-strokes, synchronized narration (skipped without an OS TTS engine),
-dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
+strokes, synchronized narration (skipped without an OS TTS engine), still
+frames, dry runs, and invalid inputs. It requires FFmpeg with `drawtext` and a usable default font; pass
 `--font-file /path/to/font.ttf` to select one explicitly. `ADITOR_FFMPEG` can select
 a separate FFmpeg build for the CLI under test.
 

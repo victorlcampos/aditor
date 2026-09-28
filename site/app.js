@@ -66,6 +66,11 @@ const examples = {
     "description": "Speak each subtitle cue at its timestamp with the OS text-to-speech engine, mixed over the original audio.",
     "prerequisite": "Uses say on macOS, SAPI on Windows, espeak-ng on Linux. Omit --video for a WAV file. Supports --dry-run and --yes."
   },
+  frames: {
+    "command": "aditor frames demo.mp4 --count 5 \\\n  --from 5 --to 10 --dir shots/ --json",
+    "description": "Export evenly spaced stills from the whole video or a slice: a fixed count or N frames per second.",
+    "prerequisite": "Use --count or --fps (not both). Files land as frame-0001.png in the directory. Supports --dry-run and --yes."
+  },
   background: {
     command: 'aditor record --tab ABC123 \\\n  -o demo.mp4 --json\n\n# Later, use the returned recording ID:\naditor stop RECORDING_ID --json',
     description: 'Start recording in the background. Stop by session ID to finalize the MP4.',
